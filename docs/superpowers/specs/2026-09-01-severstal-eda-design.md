@@ -15,7 +15,8 @@ submission generation are explicitly out of scope.
 
 ## Inputs and safety
 
-- The raw dataset is read from `D:\kagllee\dataset`.
+- The raw dataset is read from
+  `F:\eda\dataset\severstal-steel-defect-detection`.
 - Raw images and competition CSV files are treated as read-only inputs.
 - Raw competition data and images are not committed to GitHub.
 - Generated artifacts are written to the repository and mirrored to
