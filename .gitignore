@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+
+# Raw competition data and credentials must never enter Git.
+dataset/
+data/
+*.zip
+kaggle.json
+*.token
+.env
+

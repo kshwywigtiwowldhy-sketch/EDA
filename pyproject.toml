@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "severstal-eda"
+version = "0.1.0"
+description = "Reproducible EDA for the Severstal steel defect dataset"
+requires-python = ">=3.12"
+dependencies = [
+  "matplotlib==3.10.6",
+  "numpy==2.2.6",
+  "pandas==2.3.2",
+  "Pillow==11.3.0",
+  "PyYAML==6.0.2",
+]
+
+[project.scripts]
+severstal-eda = "severstal_eda.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "nbclient==0.10.2",
+  "nbconvert==7.16.6",
+  "nbformat==5.10.4",
+  "pytest==8.4.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
