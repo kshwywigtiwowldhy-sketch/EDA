@@ -27,13 +27,15 @@
 
 ## 当前进行中
 
-- 最终验证和隐私审批已完成，正在创建收尾提交并推送 `eda/severstal-analysis` 分支。
+- 最终验证、隐私审批、本地提交和本机交付目录同步均已完成。
+- GitHub 远端写入暂被外部状态阻断：Git HTTPS 使用 OpenSSL 时连接被重置，改用 Windows Schannel 时 443 端口不可达；GitHub 连接器虽能读取仓库并显示 push 权限，但创建分支被 GitHub App 返回 403；本机未安装 `gh`，内置浏览器访问仓库也超时。
+- 待网络或 GitHub App 写权限恢复后，直接普通推送 `eda/severstal-analysis` 即可；禁止强制推送，不需要重新运行 EDA。
 
 ## 后续顺序
 
-1. 提交最终代码、测试、报告、Notebook、ZIP 和留痕文件。
-2. 将最终验证成果同步到本机交付目录。
-3. 推送 `eda/severstal-analysis` 分支并核对远端提交。
+1. 恢复 GitHub 网络连接或为 GitHub App 授予仓库 contents/ref 写权限。
+2. 普通推送 `eda/severstal-analysis` 分支。
+3. 核对远端分支提交与本地 HEAD 一致，再按需要创建面向 `main` 的 PR。
 
 ## 快速恢复
 
