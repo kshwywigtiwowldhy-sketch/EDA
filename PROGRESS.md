@@ -29,11 +29,12 @@
 
 - 最终验证、隐私审批、本地提交和本机交付目录同步均已完成。
 - GitHub 远端写入暂被外部状态阻断：Git HTTPS 使用 OpenSSL 时连接被重置，改用 Windows Schannel 时 443 端口不可达；GitHub 连接器虽能读取仓库并显示 push 权限，但创建分支被 GitHub App 返回 403；本机未安装 `gh`，内置浏览器访问仓库也超时。
+- 2026-09-01 再次上传前已复核：31 项测试通过、最终 44 个文件隐私扫描 0 命中、17 项 SHA-256 与五图 ZIP 校验通过。HTTPS/IPv4 无代理且访问 GitHub 超时；SSH 端口可达但账号未配置公钥；GitHub 账号身份正确，但 GitHub App 的已安装账号和可管理安装列表均为空，因此 API 写入仍不可用。
 - 待网络或 GitHub App 写权限恢复后，直接普通推送 `eda/severstal-analysis` 即可；禁止强制推送，不需要重新运行 EDA。
 
 ## 后续顺序
 
-1. 恢复 GitHub 网络连接或为 GitHub App 授予仓库 contents/ref 写权限。
+1. 在 Codex 的 GitHub 连接中，把 GitHub App 安装到账号 `kshwywigtiwowldhy-sketch`，并授权仓库 `EDA` 的 contents/ref 写入；或恢复本机 GitHub HTTPS/SSH 凭据。
 2. 普通推送 `eda/severstal-analysis` 分支。
 3. 核对远端分支提交与本地 HEAD 一致，再按需要创建面向 `main` 的 PR。
 
