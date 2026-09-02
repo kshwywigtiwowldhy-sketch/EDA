@@ -442,7 +442,7 @@ Commit: `git commit -m "docs: add executable notebook and EDA workflow"`
 - Create: `outputs/tables/*.csv`
 - Create: `outputs/figures/*.png`
 - Create: `logs/eda_run.jsonl`
-- Copy verified deliverables to: `F:\eda\severstal_eda`
+- Copy verified deliverables to: `<local_delivery_dir>`
 
 - [ ] **Step 1: Run the full test suite**
 
@@ -462,7 +462,7 @@ Check every manifest hash, CSV schema, JSONL final event, and notebook execution
 
 - [ ] **Step 4: Mirror only verified deliverables to F drive**
 
-Copy the repository deliverable tree to `F:\eda\severstal_eda`, excluding `.git`, `.venv`, caches, credentials, and raw data. Recompute the mirror manifest and compare it to the repository manifest.
+Copy the repository deliverable tree to `<local_delivery_dir>`, excluding `.git`, `.venv`, caches, credentials, and raw data. Recompute the mirror manifest and compare it to the repository manifest.
 
 - [ ] **Step 5: Commit and publish**
 

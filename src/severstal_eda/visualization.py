@@ -48,21 +48,34 @@ def _prepare_output(output_path: str | Path) -> Path:
     return path
 
 
+def resolve_label_colors(
+    labels: Sequence[str],
+    *,
+    class_colors: dict[int, str] | None = None,
+) -> list[str]:
+    """Resolve class labels against one palette and keep no-defect neutral."""
+
+    colors = CLASS_COLORS if class_colors is None else class_colors
+    return [
+        colors.get(int(label.rsplit("_", 1)[1]), "#8D99AE")
+        if label.startswith("class_")
+        else "#8D99AE"
+        for label in labels
+    ]
+
+
 def save_label_frequency_plot(
     frequency: pd.DataFrame,
     output_path: str | Path,
+    *,
+    class_colors: dict[int, str] | None = None,
 ) -> Path:
     """Save class and no-defect image counts as a readable bar chart."""
 
     path = _prepare_output(output_path)
     labels = frequency["label"].astype(str).tolist()
     counts = frequency["image_count"].astype(int).to_numpy()
-    colors = [
-        CLASS_COLORS.get(int(label.rsplit("_", 1)[1]), "#8D99AE")
-        if label.startswith("class_")
-        else "#8D99AE"
-        for label in labels
-    ]
+    colors = resolve_label_colors(labels, class_colors=class_colors)
     fig, axis = plt.subplots(figsize=(8.5, 5.2), dpi=140)
     try:
         bars = axis.bar(labels, counts, color=colors, edgecolor="#333333", linewidth=0.6)
@@ -202,4 +215,3 @@ def save_sample_grid(
     finally:
         plt.close(fig)
     return path
-

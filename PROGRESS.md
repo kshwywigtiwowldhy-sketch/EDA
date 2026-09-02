@@ -5,7 +5,7 @@
 ## 已完成
 
 - 已批准的设计规格与详细实施计划已写入 `docs/superpowers/` 并提交到本地 Git。
-- 官方比赛数据已下载并解压到 `F:/eda/dataset/severstal-steel-defect-detection`。
+- 官方比赛数据已下载并解压到本机私有数据目录（公开仓库不记录绝对路径）。
 - 已核验数据包包含 `train.csv`、`sample_submission.csv`、12,568 张训练图和 5,506 张测试图。
 - 当前工作分支为 `eda/severstal-analysis`，原始数据保持只读且排除在 Git 之外。
 - 已创建项目配置、依赖锁定清单和首组输入校验测试。
@@ -15,29 +15,35 @@
 - 频率、精确标签组合、共现矩阵、条件共现、稀有排序与掩码面积分布已完成；官方全量 CSV 可完整计算，当前 22 项测试通过。
 - 确定性抽样、标签频率图、组合图、共现热图和可复用掩码样本图已完成；PyParsing 锁定到兼容版本后测试无警告，当前 25 项测试通过。
 - JSONL 事件日志、SHA-256 清单和失败关闭的端到端 CLI 已完成；成功/失败合成测试均通过，当前全套 29 项测试通过。
+- 官方全量 EDA 已运行；9 张正式 CSV、5 张正式图、中文报告、运行摘要和 17 项 SHA-256 清单均已生成。
+- Notebook 已非交互执行：14 个单元、7 个代码单元全部执行、0 错误；当前全套 31 项测试通过，清单 0 不匹配。
+- `README.md` 和 `WORKFLOW.md` 已完成，包含复现、验证、故障恢复和 GitHub 隐私审批门槛。
+- Windows 原子发布已修复为在最终目录创建同级临时文件后替换，避免跨沙箱身份 ACL 阻止读取；相关测试已加入。
+- 已镜像到本机交付目录：清理 3 个可再生缓存目录后，9 张表、5 张图、报告和 Notebook 齐全，上一版 16 项 SHA-256 为 0 不匹配。
+- 已完成上传前隐私扫描：未发现 API key、token、OAuth 查询串、私钥或凭据文件；发现本机绝对路径、F 盘路径、Git 作者邮箱元数据和 Kaggle 衍生图片，需要用户审查。
+- 用户已批准保留现有 Git 身份与样例图；公开文件中的本机绝对路径已脱敏，真实数据路径只保存在被 Git 忽略的本机配置中。
+- 五张 PNG 已按固定顺序整合为 `outputs/figures.zip`；ZIP CRC 校验通过，内部仅含 `figures/` 下的五张正式图。
+- 最终候选文件二次隐私扫描为 0 命中：无 API key、token、OAuth 凭据、私钥、邮箱、本机用户目录或 F 盘路径。
 
 ## 当前进行中
 
-- 项目虚拟环境的核心测试依赖已可用；其余绘图与 Notebook 依赖正在补齐。
-- 下一步是用 CLI 对 F 盘官方数据运行全量 EDA，检查正式表格、五张图、中文报告与清单。
+- 最终验证和隐私审批已完成，正在创建收尾提交并推送 `eda/severstal-analysis` 分支。
 
 ## 后续顺序
 
-1. 按 TDD 完成 RLE、标签表、统计、可视化、溯源和 CLI。
-2. 对 F 盘官方全量数据运行 EDA。
-3. 生成并执行 Notebook，生成中文报告与 `WORKFLOW.md`。
-4. 运行全量测试、核对产物清单及哈希。
-5. 将已验证成果同步到 `F:/eda`，提交本地 Git，并尝试推送 GitHub。
+1. 提交最终代码、测试、报告、Notebook、ZIP 和留痕文件。
+2. 将最终验证成果同步到本机交付目录。
+3. 推送 `eda/severstal-analysis` 分支并核对远端提交。
 
 ## 快速恢复
 
 仓库路径：
 
-`C:/Users/A/Documents/Codex/2026-08-31/github-plugin-github-openai-curated-remote/work/EDA`
+`<workspace>/work/EDA`
 
 使用 PowerShell 7：
 
-`C:/Users/A/Documents/Codex/PowerShell/7.6.5/pwsh.exe`
+`pwsh`（PowerShell 7.6.5）
 
 恢复时先检查：
 

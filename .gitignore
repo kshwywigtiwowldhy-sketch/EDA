@@ -11,7 +11,8 @@ dist/
 dataset/
 data/
 *.zip
+!outputs/figures.zip
 kaggle.json
 *.token
 .env
-
+config/eda_config.local.yaml

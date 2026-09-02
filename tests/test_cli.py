@@ -1,11 +1,26 @@
 import json
 from pathlib import Path
+import zipfile
 
 import pandas as pd
 from PIL import Image
 import pytest
 
-from severstal_eda.cli import run_eda
+from severstal_eda.cli import _atomic_publish, run_eda
+
+
+def test_atomic_publish_copies_into_destination_filesystem_identity(tmp_path: Path):
+    staged = tmp_path / "stage" / "artifact.txt"
+    staged.parent.mkdir()
+    staged.write_text("verified", encoding="utf-8")
+    staged_identity = staged.stat().st_ino
+    destination = tmp_path / "final" / "artifact.txt"
+
+    _atomic_publish(staged, destination)
+
+    assert destination.read_text(encoding="utf-8") == "verified"
+    assert not staged.exists()
+    assert destination.stat().st_ino != staged_identity
 
 
 def make_synthetic_project(tmp_path: Path, *, include_train_csv: bool = True) -> Path:
@@ -72,14 +87,21 @@ def test_run_eda_writes_complete_audited_deliverables(tmp_path: Path):
     }
     assert {path.name for path in (tmp_path / "outputs" / "tables").glob("*.csv")} == expected_tables
     assert {path.name for path in (tmp_path / "outputs" / "figures").glob("*.png")} == expected_figures
+    figures_archive = tmp_path / "outputs" / "figures.zip"
+    assert figures_archive.exists()
+    with zipfile.ZipFile(figures_archive) as archive:
+        assert set(archive.namelist()) == {
+            f"figures/{filename}" for filename in expected_figures
+        }
     assert (tmp_path / "outputs" / "run_summary.json").exists()
     assert (tmp_path / "reports" / "eda_report.md").exists()
     assert (tmp_path / "MANIFEST.sha256").exists()
-    events = [
-        json.loads(line)["event"]
+    records = [
+        json.loads(line)
         for line in (tmp_path / "logs" / "eda_run.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert events == ["run_started", "run_succeeded"]
+    assert [record["event"] for record in records] == ["run_started", "run_succeeded"]
+    assert records[0]["config_path"] == "config/eda.yaml"
     assert result.summary["train_images"] == 4
     assert result.summary["no_defect_images"] == 1
 

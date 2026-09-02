@@ -9,8 +9,10 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import tempfile
 from typing import Any
+import zipfile
 
 import pandas as pd
 
@@ -40,6 +42,59 @@ class RunResult:
     summary: dict[str, Any]
     output_paths: tuple[Path, ...]
     selected_samples: dict[str, list[str]]
+
+
+def _atomic_publish(staged: Path, destination: Path) -> None:
+    """Copy into the final directory before replace so Windows ACLs inherit there."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        shutil.copyfile(staged, temporary_path)
+        os.replace(temporary_path, destination)
+        staged.unlink()
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _config_reference(config_path: Path, manifest_base: Path) -> str:
+    """Return a portable log reference without exposing an absolute machine path."""
+
+    try:
+        return config_path.relative_to(manifest_base).as_posix()
+    except ValueError:
+        return config_path.name
+
+
+def _write_figures_archive(
+    figure_paths: list[Path],
+    archive_path: Path,
+    *,
+    base_dir: Path,
+) -> Path:
+    """Write figures to a deterministic ZIP for publication and transfer."""
+
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(
+        archive_path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as archive:
+        for figure_path in sorted(figure_paths, key=lambda path: path.as_posix()):
+            archive_name = figure_path.relative_to(base_dir).as_posix()
+            entry = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = 0o100644 << 16
+            archive.writestr(entry, figure_path.read_bytes(), compresslevel=9)
+    return archive_path
 
 
 def _package_versions() -> dict[str, str]:
@@ -227,9 +282,14 @@ def run_eda(config_path: str | Path) -> RunResult:
     config: EDAConfig | None = None
     try:
         config = load_config(config_path)
-        append_event(config.log_path, "run_started", config_path=str(config_path), seed=config.seed)
-        paths = validate_dataset(config.dataset_dir)
         manifest_base = config.manifest_path.parent.resolve()
+        append_event(
+            config.log_path,
+            "run_started",
+            config_path=_config_reference(config_path, manifest_base),
+            seed=config.seed,
+        )
+        paths = validate_dataset(config.dataset_dir)
         try:
             output_relative = config.output_dir.relative_to(manifest_base)
             report_relative = config.report_path.relative_to(manifest_base)
@@ -319,25 +379,23 @@ def run_eda(config_path: str | Path) -> RunResult:
                 table.to_csv(table_path, index=False, encoding="utf-8")
                 stage_artifacts.append(table_path)
 
-            stage_artifacts.extend(
-                [
-                    save_label_frequency_plot(
-                        frequency, stage_figures / "label_frequency.png"
-                    ),
-                    save_label_combinations_plot(
-                        combinations, stage_figures / "label_combinations.png"
-                    ),
-                    save_cooccurrence_heatmap(
-                        cooccurrence, stage_figures / "cooccurrence_heatmap.png"
-                    ),
-                ]
-            )
             colors = (
                 {int(key): value for key, value in config.class_colors.items()}
                 if config.class_colors
                 else None
             )
-            stage_artifacts.append(
+            figure_artifacts = [
+                save_label_frequency_plot(
+                    frequency,
+                    stage_figures / "label_frequency.png",
+                    class_colors=colors,
+                ),
+                save_label_combinations_plot(
+                    combinations, stage_figures / "label_combinations.png"
+                ),
+                save_cooccurrence_heatmap(
+                    cooccurrence, stage_figures / "cooccurrence_heatmap.png"
+                ),
                 save_sample_grid(
                     selected_samples["representative"],
                     annotations,
@@ -348,8 +406,8 @@ def run_eda(config_path: str | Path) -> RunResult:
                     title="Representative class, no-defect, and multilabel samples",
                     class_colors=colors,
                 )
-            )
-            stage_artifacts.append(
+            ]
+            figure_artifacts.append(
                 save_sample_grid(
                     selected_samples["rare"],
                     annotations,
@@ -359,6 +417,14 @@ def run_eda(config_path: str | Path) -> RunResult:
                     width=config.image_width,
                     title="Rare classes and rare exact combinations",
                     class_colors=colors,
+                )
+            )
+            stage_artifacts.extend(figure_artifacts)
+            stage_artifacts.append(
+                _write_figures_archive(
+                    figure_artifacts,
+                    stage_output / "figures.zip",
+                    base_dir=stage_output,
                 )
             )
 
@@ -394,14 +460,11 @@ def run_eda(config_path: str | Path) -> RunResult:
             for staged in [path for path in stage_artifacts if path != stage_report]:
                 relative = staged.relative_to(stage_root)
                 destination = manifest_base / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(staged, destination)
+                _atomic_publish(staged, destination)
                 final_paths.append(destination)
-            config.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(stage_manifest, config.manifest_path)
+            _atomic_publish(stage_manifest, config.manifest_path)
             final_paths.append(config.manifest_path)
-            config.report_path.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(stage_report, config.report_path)
+            _atomic_publish(stage_report, config.report_path)
             final_paths.append(config.report_path)
 
         append_event(
@@ -437,4 +500,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

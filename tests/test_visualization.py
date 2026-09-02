@@ -5,12 +5,22 @@ import pandas as pd
 from PIL import Image
 
 from severstal_eda.visualization import (
+    resolve_label_colors,
     save_cooccurrence_heatmap,
     save_label_combinations_plot,
     save_label_frequency_plot,
     save_sample_grid,
     select_sample_ids,
 )
+
+
+def test_label_colors_use_supplied_class_palette_and_neutral_no_defect():
+    colors = resolve_label_colors(
+        ["class_1", "class_2", "no_defect"],
+        class_colors={1: "#111111", 2: "#222222"},
+    )
+
+    assert colors == ["#111111", "#222222", "#8D99AE"]
 
 
 def test_sample_selection_is_stable_and_unique():

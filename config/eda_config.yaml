@@ -1,4 +1,4 @@
-dataset_dir: F:/eda/dataset/severstal-steel-defect-detection
+dataset_dir: ../data/severstal-steel-defect-detection
 output_dir: ../outputs
 report_path: ../reports/eda_report.md
 log_path: ../logs/eda_run.jsonl

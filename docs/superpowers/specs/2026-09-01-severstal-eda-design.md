@@ -16,12 +16,12 @@ submission generation are explicitly out of scope.
 ## Inputs and safety
 
 - The raw dataset is read from
-  `F:\eda\dataset\severstal-steel-defect-detection`.
+  `<local_dataset_dir>`.
 - Raw images and competition CSV files are treated as read-only inputs.
 - Raw competition data and images are not committed to GitHub.
 - Generated artifacts are written to the repository and mirrored to
-  `F:\eda\severstal_eda` when filesystem permission is available.
-- Existing files under `F:\eda` are not overwritten.
+  `<local_delivery_dir>` when filesystem permission is available.
+- Existing files outside the selected delivery directory are not overwritten.
 
 ## Architecture
 
@@ -136,5 +136,5 @@ inventory, hashes, and representative figures are verified.
 Work is performed on branch `eda/severstal-analysis` with focused commits for
 specification, tests, analysis modules, visualization, Notebook/report, and
 final verification. The same deliverable tree is mirrored to
-`F:\eda\severstal_eda` after verification. GitHub publication excludes raw
+`<local_delivery_dir>` after verification. GitHub publication excludes raw
 competition data and personal credentials.
