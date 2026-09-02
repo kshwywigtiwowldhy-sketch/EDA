@@ -12,6 +12,7 @@ dependencies = [
   "numpy==2.2.6",
   "pandas==2.3.2",
   "Pillow==11.3.0",
+  "pyparsing==3.2.3",
   "PyYAML==6.0.2",
 ]
 
@@ -32,4 +33,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-
