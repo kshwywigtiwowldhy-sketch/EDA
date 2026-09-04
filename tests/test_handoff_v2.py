@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+import re
 import zipfile
+from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).parents[1]
@@ -27,7 +28,21 @@ EXPECTED_IMAGE_MEMBERS = {
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_sha256_record(path: Path) -> tuple[str, str]:
+    records = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    assert len(records) == 1
+    match = re.fullmatch(r"([0-9a-f]{64})  ([^\r\n]+)", records[0])
+    assert match is not None
+    return match.group(1), match.group(2)
 
 
 def read_ids(path: Path) -> list[str]:
@@ -56,13 +71,18 @@ def test_machine_verification_matches_frozen_split() -> None:
             encoding="utf-8"
         )
     )
-    assert evidence["train_count"] == 10_054
-    assert evidence["valid_count"] == 2_514
-    assert evidence["overlap"] == 0
-    assert evidence["union"] == 12_568
-    assert evidence["missing"] == 0
-    assert evidence["unknown"] == 0
-    assert evidence["strong_cross_split_near_duplicate_edges"] == 0
+    expected_counts = {
+        "train_count": 10_054,
+        "valid_count": 2_514,
+        "overlap": 0,
+        "union": 12_568,
+        "missing": 0,
+        "unknown": 0,
+        "strong_cross_split_near_duplicate_edges": 0,
+    }
+    for field, expected in expected_counts.items():
+        assert type(evidence[field]) is int
+        assert evidence[field] == expected
     assert evidence["train_sha256"] == TRAIN_SHA256
     assert evidence["valid_sha256"] == VALID_SHA256
 
@@ -70,22 +90,32 @@ def test_machine_verification_matches_frozen_split() -> None:
 def test_complete_handoff_archive_matches_external_hash() -> None:
     archive = ROOT / "deliverables/severstal_modeling_handoff_v2_20260902.zip"
     checksum = ROOT / "deliverables/severstal_modeling_handoff_v2_20260902.zip.sha256"
-    assert sha256(archive) == HANDOFF_SHA256
-    assert checksum.read_text(encoding="utf-8").split()[0] == HANDOFF_SHA256
+    recorded_digest, recorded_name = read_sha256_record(checksum)
+    assert recorded_name == archive.name
+    assert recorded_digest == sha256(archive) == HANDOFF_SHA256
 
 
 def test_image_archive_contains_only_expected_png_files() -> None:
     archive = ROOT / "deliverables/severstal_handoff_images_v2_20260902.zip"
     checksum = ROOT / "deliverables/severstal_handoff_images_v2_20260902.zip.sha256"
     with zipfile.ZipFile(archive) as bundle:
-        members = set(bundle.namelist())
+        member_names = bundle.namelist()
         assert bundle.testzip() is None
+    assert len(member_names) == 12
+    assert len(set(member_names)) == len(member_names)
+    members = set(member_names)
     assert members == EXPECTED_IMAGE_MEMBERS
     assert all(
-        not Path(name).is_absolute() and ".." not in Path(name).parts
+        "\\" not in name
+        and not PurePosixPath(name).is_absolute()
+        and not PurePosixPath(name).anchor
+        and ".." not in PurePosixPath(name).parts
+        and re.match(r"^[A-Za-z]:", name) is None
         for name in members
     )
-    assert checksum.read_text(encoding="utf-8").split()[0] == sha256(archive)
+    recorded_digest, recorded_name = read_sha256_record(checksum)
+    assert recorded_name == archive.name
+    assert recorded_digest == sha256(archive)
 
 
 def test_handoff_docs_use_final_anonymous_v2_contract() -> None:
