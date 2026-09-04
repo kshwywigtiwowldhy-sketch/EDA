@@ -1,0 +1,27 @@
+{
+  "train_count": 10054,
+  "valid_count": 2514,
+  "train_unique": 10054,
+  "valid_unique": 2514,
+  "overlap": 0,
+  "union": 12568,
+  "missing": 0,
+  "unknown": 0,
+  "strong_cross_split_near_duplicate_edges": 0,
+  "validation_combination_counts": {
+    "1": 154,
+    "1+2": 7,
+    "1+2+3": 1,
+    "1+3": 18,
+    "2": 39,
+    "2+3": 2,
+    "3": 952,
+    "3+4": 57,
+    "4": 103,
+    "none": 1181
+  },
+  "max_area_ks_statistic": 0.07854050711193568,
+  "min_area_ks_pvalue": 0.04034212878014672,
+  "train_sha256": "4bd175ac3399a433f3f8164fa523e7eb982a40a0eff7b23ac731414bc1a84b0b",
+  "valid_sha256": "4f08d19ac713e179b5bb566e4819cf55e10a8c04b2a5fb0f8733f12b83eeef5f"
+}

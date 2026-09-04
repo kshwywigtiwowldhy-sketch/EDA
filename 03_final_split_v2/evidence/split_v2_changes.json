@@ -1,0 +1,127 @@
+{
+  "checks": {
+    "train_count": 10054,
+    "valid_count": 2514,
+    "overlap": 0,
+    "union": 12568,
+    "missing": 0,
+    "unknown": 0,
+    "strong_cross_split_edges": 0,
+    "validation_combination_counts_preserved": true,
+    "moved_near_duplicate_images": 18,
+    "replacement_images": 18,
+    "crossing_components_v1": 18
+  },
+  "train_sha256": "4bd175ac3399a433f3f8164fa523e7eb982a40a0eff7b23ac731414bc1a84b0b",
+  "valid_sha256": "4f08d19ac713e179b5bb566e4819cf55e10a8c04b2a5fb0f8733f12b83eeef5f",
+  "swaps": [
+    {
+      "near_duplicate_moved_valid_to_train": "0af6b34a8.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "07c8c77a3.jpg",
+      "area_log_distance": 0.0
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "118b71091.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "cc73c4765.jpg",
+      "area_log_distance": 0.0030816665374082675
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "24fce7ae0.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "c579d8413.jpg",
+      "area_log_distance": 8.124466836356703e-05
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "59a2887fd.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "159b43d49.jpg",
+      "area_log_distance": 0.021053409197832273
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "5a3e79676.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "2188f5429.jpg",
+      "area_log_distance": 0.0
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "600a81590.jpg",
+      "combination": "none",
+      "replacement_moved_train_to_valid": "7207d1be6.jpg",
+      "area_log_distance": 0.00025234267344335714
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "618f0ff16.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "eef6ec80a.jpg",
+      "area_log_distance": 0.0011689072049811955
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "91622e727.jpg",
+      "combination": "none",
+      "replacement_moved_train_to_valid": "ab13a6f37.jpg",
+      "area_log_distance": 0.0003117933608194483
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "a67df9196.jpg",
+      "combination": "1",
+      "replacement_moved_train_to_valid": "80d241bc5.jpg",
+      "area_log_distance": 0.003558722616994636
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "b30a3e3b6.jpg",
+      "combination": "none",
+      "replacement_moved_train_to_valid": "51ff1aef9.jpg",
+      "area_log_distance": 4.70609376912058e-05
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "bd0e26062.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "0ac9936af.jpg",
+      "area_log_distance": 0.0004894762701734834
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "bea7ff137.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "a2c0731d2.jpg",
+      "area_log_distance": 0.0005418585881713511
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "d7a966551.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "227d0512b.jpg",
+      "area_log_distance": 0.0007082153270516756
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "e054a983d.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "961333d4e.jpg",
+      "area_log_distance": 0.0003687315675993119
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "e4d9efbaa.jpg",
+      "combination": "1+3",
+      "replacement_moved_train_to_valid": "938a15be6.jpg",
+      "area_log_distance": 0.37503926866533366
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "e4da37c1e.jpg",
+      "combination": "1+2",
+      "replacement_moved_train_to_valid": "d26ead1d8.jpg",
+      "area_log_distance": 0.20460704041899724
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "e9fa75516.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "dfd8a544d.jpg",
+      "area_log_distance": 0.00023960704559478074
+    },
+    {
+      "near_duplicate_moved_valid_to_train": "f9682bef7.jpg",
+      "combination": "3",
+      "replacement_moved_train_to_valid": "82e32c810.jpg",
+      "area_log_distance": 0.002361276185680161
+    }
+  ]
+}
