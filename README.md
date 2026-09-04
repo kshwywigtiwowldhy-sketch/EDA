@@ -7,7 +7,7 @@
 3. 代表性图片和 RLE 掩码可视化；
 4. 稀有标签、稀有组合与微小掩码分析。
 
-不包含数据下载审计、验证集划分、建模、训练或提交策略。
+EDA 分析代码本身不包含数据下载审计、建模、训练或提交策略。仓库另行发布的冻结 V2 建模交接契约只提供经过复核的验证划分和使用说明，不改变上述 EDA 统计口径。
 
 ## 主要成果
 
@@ -20,6 +20,18 @@
 - 最稀有已出现组合 `2+4`：1 张。
 
 详细证据见 [中文报告](reports/eda_report.md)，可执行版本见 [Notebook](notebooks/severstal_eda.ipynb)。
+
+## 建模交接：最终冻结 V2
+
+建模前必须先读 [README_建模交接必读.md](README_建模交接必读.md) 和 [最终划分报告](03_final_split_v2/split_report.md)，并遵守以下契约：
+
+- 只使用 [train_ids.csv](03_final_split_v2/splits/train_ids.csv) 和 [valid_ids.csv](03_final_split_v2/splits/valid_ids.csv)；旧划分全部作废。
+- 两份 CSV 都没有表头；用 Pandas 读取时必须指定 `header=None`，否则第一张图片会被误当成列名。
+- 12,568 张训练图中有 5,902 张未出现在 `train.csv` 中；这些无缺陷样本必须生成四通道全零掩码。
+- 类别只使用匿名名称 `class_1`～`class_4`，不得采用未经 Kaggle 官方确认的中文缺陷名。
+- 冻结 V2 为训练 10,054 张、验证 2,514 张。除非出现新的明确数据泄漏证据，不得为了模型分数反复修改划分。
+
+可下载 [完整交接包](deliverables/severstal_modeling_handoff_v2_20260902.zip) 及其 [SHA-256 sidecar](deliverables/severstal_modeling_handoff_v2_20260902.zip.sha256)，或 [12 图图片包](deliverables/severstal_handoff_images_v2_20260902.zip) 及其 [SHA-256 sidecar](deliverables/severstal_handoff_images_v2_20260902.zip.sha256)。图片不在 Markdown 中逐张嵌入，以避免页面和交付记录膨胀。
 
 ## 快速运行
 

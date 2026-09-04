@@ -1,13 +1,13 @@
 # Severstal EDA 工作进度与恢复点
 
-更新时间：2026-09-01
+更新时间：2026-09-04
 
 ## 已完成
 
 - 已批准的设计规格与详细实施计划已写入 `docs/superpowers/` 并提交到本地 Git。
 - 官方比赛数据已下载并解压到本机私有数据目录（公开仓库不记录绝对路径）。
 - 已核验数据包包含 `train.csv`、`sample_submission.csv`、12,568 张训练图和 5,506 张测试图。
-- 当前工作分支为 `eda/severstal-analysis`，原始数据保持只读且排除在 Git 之外。
+- 原始 EDA 阶段工作分支为 `eda/severstal-analysis`，原始数据保持只读且排除在 Git 之外。
 - 已创建项目配置、依赖锁定清单和首组输入校验测试。
 - 输入配置与数据集路径校验已按 TDD 完成，`tests/test_io.py` 为 3 项通过。
 - 严格的列优先 RLE 解析、边界检查、重叠检查、面积计算与解码已完成；当前全套 12 项测试通过。
@@ -25,18 +25,33 @@
 - 五张 PNG 已按固定顺序整合为 `outputs/figures.zip`；ZIP CRC 校验通过，内部仅含 `figures/` 下的五张正式图。
 - 最终候选文件二次隐私扫描为 0 命中：无 API key、token、OAuth 凭据、私钥、邮箱、本机用户目录或 F 盘路径。
 
+## 2026-09-04：冻结 V2 建模交接留痕
+
+- 本次冻结交接在 `handoff/severstal-v2` 分支整理；旧分支名只作为原始 EDA 阶段历史记录。
+- 完整本地交接 ZIP 已生成；SHA-256 为 `72faab26d057529de6d9d16b13ea13de0a7ae5dd4e40a1cea575649d59b32922`，与外部 sidecar 一致，包内 `MANIFEST.sha256` 的 55 项逐项校验通过。
+- V1 复核发现 19 条强跨集合近重复边，涉及 18 个跨集合近重复组。V2 将 18 张相关验证图移入训练集，并以 18 张标签组合相同、掩码面积尽量接近的安全训练图置换到验证集。
+- V2 仍为训练 10,054 张、验证 2,514 张，所有精确标签组合计数与 V1 完全相同；强跨集合近重复边已从 19 降为 0。
+- 建模类别统一为匿名的 `class_1`～`class_4`；两份划分 CSV 无表头，Pandas 必须显式使用 `header=None`。未出现在 `train.csv` 中的 5,902 张训练图必须使用四通道全零掩码。
+- 旧划分全部作废，后续实验只使用冻结 V2；除非发现新的明确数据泄漏证据，不得依据模型分数反复修改划分。
+- 面向建模的面积分布图错误名称已修正为 `mask_area_split_distribution_v2.png`。
+- 冻结文件 SHA-256：`train_ids.csv` 为 `4bd175ac3399a433f3f8164fa523e7eb982a40a0eff7b23ac731414bc1a84b0b`；`valid_ids.csv` 为 `4f08d19ac713e179b5bb566e4819cf55e10a8c04b2a5fb0f8733f12b83eeef5f`。
+- 12 图图片 ZIP 的 SHA-256 为 `41232694f20e10b2dd2e5f3ccb0a64dbce64a96a9a9820a8ac6bed0e1f7cda50`；成员、CRC、路径安全和 sidecar 已纳入交接合同。
+- 当前本地归档已完成，V2 目标合同测试为 5 passed。本次文档更新后已使用现有虚拟环境完成最终全量回归：36 passed。
+- V2 最终隐私清单及其用户批准尚未完成；本机路径属于待审隐私类别，本节未新增绝对路径。所有留痕均不记录或泄露真实 API key、token 或其他密钥值。
+- 本次未执行 V2 的 F 盘镜像或 GitHub 上传。GitHub push 必须等待最终隐私清单获得用户明确批准；获批后也只允许普通 push 和 fast-forward `main`，禁止 force push。
+
 ## 当前进行中
 
-- 最终验证、隐私审批、本地提交和本机交付目录同步均已完成。
-- GitHub 远端写入暂被外部状态阻断：Git HTTPS 使用 OpenSSL 时连接被重置，改用 Windows Schannel 时 443 端口不可达；GitHub 连接器虽能读取仓库并显示 push 权限，但创建分支被 GitHub App 返回 403；本机未安装 `gh`，内置浏览器访问仓库也超时。
-- 2026-09-01 再次上传前已复核：31 项测试通过、最终 44 个文件隐私扫描 0 命中、17 项 SHA-256 与五图 ZIP 校验通过。HTTPS/IPv4 无代理且访问 GitHub 超时；SSH 端口可达但账号未配置公钥；GitHub 账号身份正确，但 GitHub App 的已安装账号和可管理安装列表均为空，因此 API 写入仍不可用。
-- 待网络或 GitHub App 写权限恢复后，直接普通推送 `eda/severstal-analysis` 即可；禁止强制推送，不需要重新运行 EDA。
+- 2026-09-01 的原始 EDA 候选曾完成 31 项测试和隐私复核；上节记录的是此后新增的冻结 V2 交接，二者状态不可混用。
+- V2 本地归档、目标合同测试和本次文档更新后的 36 项最终全量测试已完成；最终隐私清单与用户批准仍需按顺序完成。
+- V2 尚未镜像到 F 盘，也尚未上传 GitHub。即使远端权限恢复，也不得跳过最终隐私批准闸门。
 
 ## 后续顺序
 
-1. 在 Codex 的 GitHub 连接中，把 GitHub App 安装到账号 `kshwywigtiwowldhy-sketch`，并授权仓库 `EDA` 的 contents/ref 写入；或恢复本机 GitHub HTTPS/SSH 凭据。
-2. 普通推送 `eda/severstal-analysis` 分支。
-3. 核对远端分支提交与本地 HEAD 一致，再按需要创建面向 `main` 的 PR。
+1. 保留 PowerShell 7 与现有虚拟环境下 36 项最终全量测试通过的记录，并完成最终隐私清单。
+2. 等待用户逐项审核隐私清单并给出明确批准；未批准时停止所有外发动作。
+3. 获批后从批准提交执行 `git archive` 快照，再做 F 盘镜像、逐文件 SHA-256 对比和 ZIP CRC 校验。
+4. 远端权限可用时普通推送当前 V2 分支，核对远端提交与本地 HEAD 一致；`main` 只做 fast-forward，禁止 force push。
 
 ## 快速恢复
 
