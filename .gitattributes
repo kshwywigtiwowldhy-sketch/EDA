@@ -1,3 +1,4 @@
 03_final_split_v2/splits/*.csv whitespace=cr-at-eol
 03_final_split_v2/evidence/*.json whitespace=cr-at-eol
 03_final_split_v2/split_report.md whitespace=-blank-at-eol
+deliverables/severstal_modeling_handoff_v2_20260902.zip.sha256 whitespace=cr-at-eol
