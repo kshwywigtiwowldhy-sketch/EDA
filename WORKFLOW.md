@@ -558,7 +558,7 @@ V2 发布后即冻结。除非发现新的、可复核的明确数据泄漏证�
 
 #### 13.7.1 只报告类别和位置的隐私扫描
 
-将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。文件扫描只输出范围、命中类别和位置；作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
+将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。所有 Git 路径生产命令都显式设置 `core.quotePath=false`，以本仓库已验证的逐行路径协议返回真实 Unicode 路径；路径保留为 PowerShell 数组并在 `--` 后逐项传递，含空格的文件名不会被字符串拼接拆分。文件扫描只输出范围、命中类别和位置；作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -602,7 +602,7 @@ if ($LASTEXITCODE -ne 0 -or $localFeatureSha.Count -ne 1 -or
     $localFeatureSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
     throw 'The local feature-branch tip is not the approved commit'
 }
-$worktreeState = @(git status --porcelain=v1 --untracked-files=all)
+$worktreeState = @(git -c core.quotePath=false status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the worktree state' }
 if ($worktreeState.Count -ne 0) { throw 'The worktree must be clean before approval review' }
 git merge-base --is-ancestor $approvedBaseCommitSha $approvedCommitSha
@@ -627,9 +627,9 @@ function Get-RedactedFingerprint([AllowEmptyString()][string]$Value) {
     $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant().Substring(0, 16)
 }
-$worktreeFiles = @(git ls-files --cached --others --exclude-standard)
+$worktreeFiles = @(git -c core.quotePath=false ls-files --cached --others --exclude-standard)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate worktree files' }
-$stagedFiles = @(git diff --cached --name-only --diff-filter=ACMR)
+$stagedFiles = @(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate staged files' }
 $historyCommits = @(git rev-list $historyRange)
 if ($LASTEXITCODE -ne 0) {
@@ -671,7 +671,7 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
     }
 
     if ($stagedFiles.Count -gt 0) {
-        $locations = @(git grep --cached -I -i -l -E -e $entry.Value -- $stagedFiles)
+        $locations = @(git -c core.quotePath=false grep --cached -I -i -l -E -e $entry.Value -- $stagedFiles)
         $searchExit = $LASTEXITCODE
         if ($searchExit -gt 1) { throw "Index privacy scan failed: $($entry.Key)" }
         foreach ($location in $locations) {
@@ -679,7 +679,7 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
         }
     }
     foreach ($commit in $historyCommits) {
-        $locations = @(git grep -I -i -l -E -e $entry.Value $commit)
+        $locations = @(git -c core.quotePath=false grep -I -i -l -E -e $entry.Value $commit)
         $searchExit = $LASTEXITCODE
         if ($searchExit -gt 1) { throw "History privacy scan failed: $($entry.Key)" }
         foreach ($location in $locations) {
