@@ -558,7 +558,7 @@ V2 发布后即冻结。除非发现新的、可复核的明确数据泄漏证�
 
 #### 13.7.1 只报告类别和位置的隐私扫描
 
-将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。所有 Git 路径生产命令都显式设置 `core.quotePath=false`，以本仓库已验证的逐行路径协议返回真实 Unicode 路径；路径保留为 PowerShell 数组并在 `--` 后逐项传递，含空格的文件名不会被字符串拼接拆分。worktree、index 和 history 的文件内容扫描统一复用 `$secretPatterns`，文件名另按 `$sensitivePathPatterns` 分类；两者都只输出范围、命中类别和仓库相对位置。作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配同等敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
+将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。所有 Git 路径生产命令都显式设置 `core.quotePath=false`，以本仓库已验证的逐行路径协议返回真实 Unicode 路径；worktree 路径保留为 PowerShell 数组并在 `--` 后逐项传递，含空格的文件名不会被字符串拼接拆分，index 内容则由 `git grep --cached ... --` 直接扫描完整索引，不以暂存差异代替索引。worktree、index 和 history 的文件内容扫描统一复用 `$secretPatterns`，文件名另按 `$sensitivePathPatterns` 分类；内容与文件名命中都只输出范围、命中类别和仓库相对位置，另外输出不含路径的 index 扫描文件数摘要。作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配同等敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -644,8 +644,9 @@ function Get-RedactedFingerprint([AllowEmptyString()][string]$Value) {
 }
 $worktreeFiles = @(git -c core.quotePath=false ls-files --cached --others --exclude-standard)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate worktree files' }
-$stagedFiles = @(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
-if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate staged files' }
+$indexFiles = @(git -c core.quotePath=false ls-files --cached)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate index files' }
+Write-Output ("scan-summary`tindex-files-scanned`t$($indexFiles.Count)")
 $historyCommits = @(git rev-list $historyRange)
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to enumerate the approved history range'
@@ -691,8 +692,8 @@ foreach ($entry in $secretPatterns.GetEnumerator()) {
         }
     }
 
-    if ($stagedFiles.Count -gt 0) {
-        $locations = @(git -c core.quotePath=false grep --cached -I -i -l -E -e $entry.Value -- $stagedFiles)
+    if ($indexFiles.Count -gt 0) {
+        $locations = @(git -c core.quotePath=false grep --cached -I -i -l -E -e $entry.Value --)
         $searchExit = $LASTEXITCODE
         if ($searchExit -gt 1) { throw "Index privacy scan failed: $($entry.Key)" }
         foreach ($location in $locations) {
@@ -717,7 +718,7 @@ foreach ($entry in $sensitivePathPatterns.GetEnumerator()) {
     foreach ($path in $worktreeFiles) {
         if ($path -match $entry.Value) { Write-Output ("worktree`t$($entry.Key)`t$path") }
     }
-    foreach ($path in $stagedFiles) {
+    foreach ($path in $indexFiles) {
         if ($path -match $entry.Value) { Write-Output ("index`t$($entry.Key)`t$path") }
     }
     foreach ($commit in $historyCommits) {
@@ -890,37 +891,39 @@ try {
 
         $zipMembers = [string[]]@($deliveryHashes.Keys)
         [Array]::Sort($zipMembers, [StringComparer]::Ordinal)
-        $deliveryZipStream = [IO.File]::Open(
-            $deliveryZip,
-            [IO.FileMode]::CreateNew,
-            [IO.FileAccess]::ReadWrite,
-            [IO.FileShare]::None
-        )
-        $deliveryZipCreated = $true
+        $deliveryZipStream = $null
+        $deliveryArchive = $null
         try {
+            $deliveryZipStream = [IO.File]::Open(
+                $deliveryZip,
+                [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None
+            )
+            $deliveryZipCreated = $true
             $deliveryArchive = [IO.Compression.ZipArchive]::new(
                 $deliveryZipStream,
                 [IO.Compression.ZipArchiveMode]::Create,
                 $true
             )
-            try {
-                foreach ($relative in $zipMembers) {
-                    $entry = $deliveryArchive.CreateEntry(
-                        $relative,
-                        [IO.Compression.CompressionLevel]::Optimal
-                    )
-                    $inputStream = [IO.File]::OpenRead((Join-Path $deliveryRoot $relative.Replace('/', '\')))
-                    $entryStream = $entry.Open()
-                    try { $inputStream.CopyTo($entryStream) }
-                    finally {
-                        $entryStream.Dispose()
-                        $inputStream.Dispose()
-                    }
+            foreach ($relative in $zipMembers) {
+                $entry = $deliveryArchive.CreateEntry(
+                    $relative,
+                    [IO.Compression.CompressionLevel]::Optimal
+                )
+                $inputStream = [IO.File]::OpenRead((Join-Path $deliveryRoot $relative.Replace('/', '\')))
+                $entryStream = $entry.Open()
+                try { $inputStream.CopyTo($entryStream) }
+                finally {
+                    $entryStream.Dispose()
+                    $inputStream.Dispose()
                 }
             }
-            finally { $deliveryArchive.Dispose() }
         }
-        finally { $deliveryZipStream.Dispose() }
+        finally {
+            if ($null -ne $deliveryArchive) { $deliveryArchive.Dispose() }
+            if ($null -ne $deliveryZipStream) { $deliveryZipStream.Dispose() }
+        }
 
         @'
 import hashlib
