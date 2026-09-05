@@ -219,10 +219,145 @@ Get-Content PROGRESS.md
 
 ### 13.1 接收完整包并先验证身份
 
-1. 将完整包 `deliverables/severstal_modeling_handoff_v2_20260902.zip` 和同名 `.zip.sha256` sidecar 作为一组接收；不要先解压、后补校验。
-2. 计算完整 ZIP 的 SHA-256，必须同时匹配 sidecar 和固定值 `72faab26d057529de6d9d16b13ea13de0a7ae5dd4e40a1cea575649d59b32922`；sidecar 必须只有一条记录，文件名也必须精确匹配。
-3. 解压前检查 ZIP CRC 和成员路径安全：成员不得重复，不得是绝对路径，不得含盘符、反斜杠或 `..` 路径段。
-4. 在临时审计目录中读取包根部的 `MANIFEST.sha256`。它必须恰好包含 55 条非空记录；逐条验证相对路径唯一且安全、文件存在、SHA-256 一致，并确认除清单自身外没有未列入清单的额外成员。任何数量、路径、CRC 或哈希不一致都应立即停止交接。
+完整 ZIP 与同名 sidecar 必须成组接收，禁止先解压后校验。ZIP 哈希须同时匹配 sidecar 和固定值 `72faab26d057529de6d9d16b13ea13de0a7ae5dd4e40a1cea575649d59b32922`；还须验证单行 sidecar、CRC、无重复或不安全成员，以及包根 `MANIFEST.sha256` 恰有 55 项且逐文件哈希和实际文件集合完全一致。
+
+从仓库根目录在 PowerShell 7 中运行以下只读校验。参数集中在代码开头；临时目录使用唯一名称，创建前拒绝覆盖，`finally` 清理前再次确认它是仓库根下的精确目标。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path -LiteralPath '.').Path
+$archiveRelative = 'deliverables/severstal_modeling_handoff_v2_20260902.zip'
+$sidecarRelative = 'deliverables/severstal_modeling_handoff_v2_20260902.zip.sha256'
+$expectedArchiveSha = '72faab26d057529de6d9d16b13ea13de0a7ae5dd4e40a1cea575649d59b32922'
+$archivePath = Join-Path $repoRoot $archiveRelative
+$sidecarPath = Join-Path $repoRoot $sidecarRelative
+$python = Join-Path $repoRoot '.venv\Scripts\python.exe'
+
+foreach ($requiredFile in @($archivePath, $sidecarPath, $python)) {
+    if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) { throw "Required file is missing: $requiredFile" }
+}
+
+$actualArchiveSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+if ($actualArchiveSha -cne $expectedArchiveSha) { throw 'Complete handoff ZIP SHA-256 mismatch' }
+
+$sidecarRecords = @(Get-Content -LiteralPath $sidecarPath)
+if ($sidecarRecords.Count -ne 1 -or [string]::IsNullOrWhiteSpace($sidecarRecords[0])) { throw 'The complete ZIP sidecar must contain exactly one record' }
+$sidecarMatch = [regex]::Match($sidecarRecords[0], '^([0-9a-f]{64})  ([^\r\n]+)$')
+if (-not $sidecarMatch.Success) { throw 'The complete ZIP sidecar format is invalid' }
+if ($sidecarMatch.Groups[1].Value -cne $expectedArchiveSha -or
+    $sidecarMatch.Groups[2].Value -cne [IO.Path]::GetFileName($archivePath)) {
+    throw 'The complete ZIP sidecar digest or filename does not match'
+}
+
+$auditName = '.handoff-audit-' + [guid]::NewGuid().ToString('N')
+$auditRoot = Join-Path $repoRoot $auditName
+if (Test-Path -LiteralPath $auditRoot) { throw "Refusing to overwrite audit directory: $auditRoot" }
+
+try {
+    @'
+from __future__ import annotations
+
+import hashlib
+import re
+import sys
+import zipfile
+from pathlib import Path, PurePosixPath
+
+archive_path = Path(sys.argv[1])
+extract_root = Path(sys.argv[2])
+
+
+def is_safe_relative(name: str) -> bool:
+    path = PurePosixPath(name)
+    return (
+        bool(name)
+        and "\\" not in name
+        and not path.is_absolute()
+        and not path.anchor
+        and ".." not in path.parts
+        and re.match(r"^[A-Za-z]:", name) is None
+        and path.as_posix() == name
+    )
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+if extract_root.exists():
+    raise RuntimeError("audit directory already exists")
+
+with zipfile.ZipFile(archive_path) as bundle:
+    member_names = bundle.namelist()
+    if len(member_names) != len(set(member_names)):
+        raise RuntimeError("duplicate ZIP member")
+    if any(not is_safe_relative(name) for name in member_names):
+        raise RuntimeError("unsafe ZIP member path")
+    if bundle.testzip() is not None:
+        raise RuntimeError("ZIP CRC failure")
+    bundle.extractall(extract_root)
+
+root_entries = list(extract_root.iterdir())
+if len(root_entries) != 1 or not root_entries[0].is_dir():
+    raise RuntimeError("the archive must contain exactly one package root")
+package_root = root_entries[0].resolve()
+manifest_path = package_root / "MANIFEST.sha256"
+if not manifest_path.is_file():
+    raise RuntimeError("MANIFEST.sha256 is missing")
+
+records = [
+    line
+    for line in manifest_path.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if len(records) != 55:
+    raise RuntimeError("MANIFEST.sha256 must contain exactly 55 records")
+
+listed_files: set[str] = set()
+for record in records:
+    match = re.fullmatch(r"([0-9a-f]{64})  ([^\r\n]+)", record)
+    if match is None:
+        raise RuntimeError("invalid MANIFEST.sha256 record")
+    expected_digest, relative_name = match.groups()
+    if not is_safe_relative(relative_name) or relative_name in listed_files:
+        raise RuntimeError("unsafe or duplicate manifest path")
+    listed_files.add(relative_name)
+    relative_path = PurePosixPath(relative_name)
+    target = package_root.joinpath(*relative_path.parts)
+    if not target.resolve().is_relative_to(package_root) or not target.is_file():
+        raise RuntimeError("manifest target is missing or outside the package root")
+    if sha256(target) != expected_digest:
+        raise RuntimeError("manifest SHA-256 mismatch")
+
+actual_files = {
+    path.relative_to(package_root).as_posix()
+    for path in package_root.rglob("*")
+    if path.is_file()
+}
+if actual_files != listed_files | {"MANIFEST.sha256"}:
+    raise RuntimeError("unlisted or missing package member")
+
+print("complete handoff archive verified")
+'@ | & $python - $archivePath $auditRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Read-only ZIP verification failed' }
+}
+finally {
+    if (Test-Path -LiteralPath $auditRoot) {
+        $resolvedAuditRoot = (Resolve-Path -LiteralPath $auditRoot).Path
+        $expectedAuditRoot = [IO.Path]::GetFullPath($auditRoot)
+        if ($resolvedAuditRoot -ne $expectedAuditRoot -or
+            (Split-Path -Parent $resolvedAuditRoot) -ne $repoRoot -or
+            [IO.Path]::GetFileName($resolvedAuditRoot) -ne $auditName) {
+            throw "Refusing unsafe audit cleanup: $resolvedAuditRoot"
+        }
+        Remove-Item -LiteralPath $resolvedAuditRoot -Recurse -Force
+    }
+}
+```
 
 ### 13.2 阅读入口并按白名单导入
 
@@ -241,25 +376,183 @@ Get-Content PROGRESS.md
 - V2 的强跨集合近重复边为 0；
 - 面积分布图名只能是 `mask_area_split_distribution_v2.png`，旧误名不得出现在面向建模的最终文档中。
 
-文档和归档完成后的全量回归固定在仓库根目录、现有虚拟环境和 PowerShell 7 中运行：
+文档和归档完成后的全量回归固定在仓库根目录、现有虚拟环境和 PowerShell 7 中运行。固定临时目录 `.test-tmp-final` 不得预先存在；以下保护先确认其父目录就是仓库根，`finally` 清理前再确认精确绝对路径，避免 pytest 覆盖未知既有目录：
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider --basetemp='.test-tmp-final'
-```
+$ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path -LiteralPath '.').Path
+$testTemp = [IO.Path]::GetFullPath((Join-Path $repoRoot '.test-tmp-final'))
+if ((Split-Path -Parent $testTemp) -ne $repoRoot) { throw "Unsafe pytest temp parent: $testTemp" }
+if (Test-Path -LiteralPath $testTemp) { throw "Refusing to overwrite existing pytest temp directory: $testTemp" }
 
-测试生成的专用 `--basetemp` 在结果记录完成后删除；删除前必须确认解析后的目标仍位于仓库工作区内。
+try {
+    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider --basetemp='.test-tmp-final'
+    if ($LASTEXITCODE -ne 0) { throw 'Full pytest regression failed' }
+}
+finally {
+    if (Test-Path -LiteralPath $testTemp) {
+        $resolvedTestTemp = (Resolve-Path -LiteralPath $testTemp).Path
+        if ($resolvedTestTemp -ne $testTemp -or
+            (Split-Path -Parent $resolvedTestTemp) -ne $repoRoot) {
+            throw "Refusing unsafe pytest temp cleanup: $resolvedTestTemp"
+        }
+        Remove-Item -LiteralPath $resolvedTestTemp -Recurse -Force
+    }
+}
+```
 
 ### 13.4 从图片白名单构建独立的 12 图 ZIP
 
-图片包 `deliverables/severstal_handoff_images_v2_20260902.zip` 只能从明确列出的 12 个 PNG 成员构建：数据审计 2 张、EDA 5 张、近重复证据 3 张、最终划分与面积分布 2 张。不得通过通配符把目录中新出现的图片自动带入。
+图片包 `deliverables/severstal_handoff_images_v2_20260902.zip` 只能从以下 12 个 POSIX 相对路径构建；该清单同时由 `tests/test_handoff_v2.py` 中的 `EXPECTED_IMAGE_MEMBERS` 锁定。不得通过通配符把目录中新出现的图片自动带入。
 
-构建后同时检查：成员总数恰为 12、集合与白名单完全相等、没有重复名、全部使用安全的 POSIX 相对路径、ZIP CRC 通过。随后生成单行 sidecar，校验其中的文件名和 SHA-256；当前图片 ZIP 的固定 SHA-256 为 `41232694f20e10b2dd2e5f3ccb0a64dbce64a96a9a9820a8ac6bed0e1f7cda50`。完整包则按第 13.1 节的 55 项内部清单复核成员，并执行相同的 CRC、路径安全和 sidecar 检查。
+```text
+01_data_audit/class_distribution.png
+01_data_audit/defect_examples.png
+02_eda/outputs/figures/cooccurrence_heatmap.png
+02_eda/outputs/figures/label_combinations.png
+02_eda/outputs/figures/label_frequency.png
+02_eda/outputs/figures/rare_label_samples.png
+02_eda/outputs/figures/representative_samples.png
+03_final_split_v2/evidence/cross_split_near_duplicates_1.png
+03_final_split_v2/evidence/cross_split_near_duplicates_2.png
+03_final_split_v2/evidence/cross_split_near_duplicates_3.png
+03_final_split_v2/figures/mask_area_split_distribution_v2.png
+03_final_split_v2/figures/split_distribution.png
+```
+
+以下 PowerShell 7/.NET 示例从仓库根运行。先把 `$verifiedSourceRoot` 设置为已通过第 13.1 节同等 CRC、路径和 55 项清单检查的交接包根目录，即直接包含 `01_data_audit/`、`02_eda/` 和 `03_final_split_v2/` 的目录；不得指向未经验证的解压结果。`$members` 是唯一输入白名单；脚本先逐项验证源文件，再复制到唯一 staging 并保留目录结构。目标 ZIP 已存在时会停止，不会覆盖正式归档。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path -LiteralPath '.').Path
+$verifiedSourceRoot = '<verified-handoff-package-root>'
+if ($verifiedSourceRoot.Contains('<') -or $verifiedSourceRoot.Contains('>') -or
+    -not [IO.Path]::IsPathRooted($verifiedSourceRoot)) { throw 'Set $verifiedSourceRoot to the verified absolute package root' }
+$sourceRoot = (Resolve-Path -LiteralPath $verifiedSourceRoot).Path
+if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) { throw "Verified package root is missing: $sourceRoot" }
+$archiveRelative = 'deliverables/severstal_handoff_images_v2_20260902.zip'
+$archivePath = [IO.Path]::GetFullPath((Join-Path $repoRoot $archiveRelative))
+$sidecarPath = [IO.Path]::GetFullPath($archivePath + '.sha256')
+$archiveParent = Split-Path -Parent $archivePath
+$members = @(
+    '01_data_audit/class_distribution.png'
+    '01_data_audit/defect_examples.png'
+    '02_eda/outputs/figures/cooccurrence_heatmap.png'
+    '02_eda/outputs/figures/label_combinations.png'
+    '02_eda/outputs/figures/label_frequency.png'
+    '02_eda/outputs/figures/rare_label_samples.png'
+    '02_eda/outputs/figures/representative_samples.png'
+    '03_final_split_v2/evidence/cross_split_near_duplicates_1.png'
+    '03_final_split_v2/evidence/cross_split_near_duplicates_2.png'
+    '03_final_split_v2/evidence/cross_split_near_duplicates_3.png'
+    '03_final_split_v2/figures/mask_area_split_distribution_v2.png'
+    '03_final_split_v2/figures/split_distribution.png'
+)
+
+if ($members.Count -ne 12 -or @($members | Sort-Object -Unique).Count -ne 12) { throw 'The image member whitelist must contain exactly 12 unique paths' }
+if (-not $archivePath.StartsWith(
+    $repoRoot + [IO.Path]::DirectorySeparatorChar,
+    [StringComparison]::OrdinalIgnoreCase
+)) {
+    throw "Image archive must stay inside the repository: $archivePath"
+}
+if (-not (Test-Path -LiteralPath $archiveParent -PathType Container)) { throw "Archive parent is missing: $archiveParent" }
+foreach ($outputPath in @($archivePath, $sidecarPath)) {
+    if ((Split-Path -Parent $outputPath) -ne $archiveParent) { throw "Unsafe image archive output path: $outputPath" }
+    if (Test-Path -LiteralPath $outputPath) { throw "Refusing to overwrite existing image archive output: $outputPath" }
+}
+
+foreach ($member in $members) {
+    $parts = @($member -split '/')
+    if ($member.Contains('\') -or [IO.Path]::IsPathRooted($member) -or
+        $member -match '^[A-Za-z]:' -or $parts -contains '..') {
+        throw "Unsafe image member path: $member"
+    }
+    $source = Join-Path $sourceRoot $member.Replace('/', [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Whitelisted image is missing: $member" }
+}
+
+$stagingName = '.handoff-images-' + [guid]::NewGuid().ToString('N')
+$stagingRoot = Join-Path $repoRoot $stagingName
+if (Test-Path -LiteralPath $stagingRoot) { throw "Refusing to overwrite staging directory: $stagingRoot" }
+
+$outputsCompleted = $false
+try {
+    $null = New-Item -ItemType Directory -Path $stagingRoot
+    foreach ($member in $members) {
+        $nativeRelative = $member.Replace('/', [IO.Path]::DirectorySeparatorChar)
+        $source = Join-Path $sourceRoot $nativeRelative
+        $destination = Join-Path $stagingRoot $nativeRelative
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination)
+        Copy-Item -LiteralPath $source -Destination $destination
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $stagingRoot,
+        $archivePath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false
+    )
+
+    $archiveSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    $sidecarRecord = '{0}  {1}{2}' -f $archiveSha, [IO.Path]::GetFileName($archivePath), "`n"
+    [IO.File]::WriteAllText(
+        $sidecarPath,
+        $sidecarRecord,
+        [Text.UTF8Encoding]::new($false)
+    )
+    if ([IO.File]::ReadAllText($sidecarPath, [Text.Encoding]::UTF8) -cne $sidecarRecord -or
+        $sidecarRecord -notmatch '^[0-9a-f]{64}  [^\r\n]+\n$') {
+        throw 'Image archive sidecar is not exactly one valid record'
+    }
+    $outputsCompleted = $true
+}
+catch {
+    if (-not $outputsCompleted) {
+        foreach ($outputPath in @($sidecarPath, $archivePath)) {
+            if (-not (Test-Path -LiteralPath $outputPath)) { continue }
+            $resolvedOutput = (Resolve-Path -LiteralPath $outputPath).Path
+            if ($resolvedOutput -ne $outputPath -or
+                (Split-Path -Parent $resolvedOutput) -ne $archiveParent -or
+                [IO.Path]::GetFileName($resolvedOutput) -notin @(
+                    [IO.Path]::GetFileName($archivePath),
+                    [IO.Path]::GetFileName($sidecarPath)
+                )) {
+                throw "Refusing unsafe partial output cleanup: $resolvedOutput"
+            }
+            Remove-Item -LiteralPath $resolvedOutput -Force
+        }
+    }
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $stagingRoot) {
+        $resolvedStaging = (Resolve-Path -LiteralPath $stagingRoot).Path
+        $expectedStaging = [IO.Path]::GetFullPath($stagingRoot)
+        if ($resolvedStaging -ne $expectedStaging -or
+            (Split-Path -Parent $resolvedStaging) -ne $repoRoot -or
+            [IO.Path]::GetFileName($resolvedStaging) -ne $stagingName) {
+            throw "Refusing unsafe staging cleanup: $resolvedStaging"
+        }
+        Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
+    }
+}
+```
+
+脚本用实际 ZIP 哈希生成唯一、无 BOM、严格单行的 sidecar，不把 `Get-FileHash` 的格式化输出重定向到文件。当前冻结图片 ZIP 的审计哈希为 `41232694f20e10b2dd2e5f3ccb0a64dbce64a96a9a9820a8ac6bed0e1f7cda50`。构建完成后立即运行合同测试；它验证 12 个成员、集合相等、路径安全、ZIP CRC、sidecar 文件名和哈希，预期为 5 passed：
+
+```powershell
+& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_handoff_v2.py
+```
 
 ### 13.5 建模端只读取冻结 V2
 
-旧划分全部作废。建模代码只导入以下两个无表头文件：
+旧划分全部作废。必须从解压后的项目根或仓库根运行建模读取代码，并且只导入以下两个无表头文件：
 
 ```python
+import pandas as pd
+
 train_ids = pd.read_csv(
     "03_final_split_v2/splits/train_ids.csv", header=None, names=["ImageId"]
 )
@@ -278,6 +571,205 @@ V2 发布后即冻结。除非发现新的、可复核的明确数据泄漏证�
 
 ### 13.7 发布前隐私与批准闸门
 
-发布候选必须先扫描工作树、暂存区和拟发布提交历史，检查凭据/API key/token、账号信息、邮箱、本机绝对路径、本地配置、原始 Kaggle 数据和 Notebook 内嵌数据。结果写成逐项隐私清单，敏感值只记录类别、掩码或哈希指纹；数据所有者明确批准前，不得执行 F 盘镜像、GitHub push、PR 或其他外发操作。
+#### 13.7.1 只报告类别和位置的隐私扫描
 
-批准后的 F 盘镜像必须从已批准提交使用 `git archive` 生成快照，不直接复制可能含未提交文件的工作树；对源快照与目标镜像进行逐文件 SHA-256 对比，并对其中每个 ZIP 执行 CRC 检查。GitHub 只允许普通 `git push`，`main` 只接受 fast-forward 更新；禁止 force push。每一步都把提交 SHA、文件哈希、检查结果和批准状态追加到 `PROGRESS.md`，但绝不记录真实密钥或 token 值。
+先把 `$historyRange` 替换为本次拟发布的真实提交范围，再从仓库根运行以下 PowerShell 7 命令。它扫描工作树、暂存内容和拟发布历史，只输出“范围、命中类别、文件位置”，不会输出匹配行或秘密值；不得为了调试去掉 `-l`。对 ZIP、Notebook 和图片还要单独人工审查，因为文本 grep 不能证明二进制内容安全。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$historyRange = '<approved-base-commit>..HEAD'
+if ($historyRange.Contains('<') -or $historyRange.Contains('>')) {
+    throw 'Replace $historyRange with the approved commit range before scanning'
+}
+
+$privacyPatterns = [ordered]@{
+    'private-key-marker' = 'BEGIN[[:space:]][A-Z0-9 ]*PRIVATE[[:space:]]KEY'
+    'credential-assignment' = '(api[_-]?key|access[_-]?token|oauth|cookie|secret|password)[[:space:]]*[:=]'
+    'email-address' = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    'windows-local-path' = '(^|[^A-Za-z])[A-Za-z]:[\\/]'
+    'home-directory-path' = '/(home|Users)/[^/[:space:]]+'
+}
+$worktreeFiles = @(git ls-files --cached --others --exclude-standard)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate worktree files' }
+$stagedFiles = @(git diff --cached --name-only --diff-filter=ACMR)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate staged files' }
+$historyCommits = @(git rev-list $historyRange)
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to enumerate the approved history range'
+}
+
+foreach ($entry in $privacyPatterns.GetEnumerator()) {
+    if ($worktreeFiles.Count -gt 0) {
+        $locations = @(& rg -I -i -l -e $entry.Value -- $worktreeFiles)
+        $searchExit = $LASTEXITCODE
+        if ($searchExit -gt 1) { throw "Worktree privacy scan failed: $($entry.Key)" }
+        foreach ($location in $locations) {
+            Write-Output ("worktree`t$($entry.Key)`t$location")
+        }
+    }
+
+    if ($stagedFiles.Count -gt 0) {
+        $locations = @(git grep --cached -I -i -l -E -e $entry.Value -- $stagedFiles)
+        $searchExit = $LASTEXITCODE
+        if ($searchExit -gt 1) { throw "Index privacy scan failed: $($entry.Key)" }
+        foreach ($location in $locations) {
+            Write-Output ("index`t$($entry.Key)`t$location")
+        }
+    }
+
+    foreach ($commit in $historyCommits) {
+        $locations = @(git grep -I -i -l -E -e $entry.Value $commit)
+        $searchExit = $LASTEXITCODE
+        if ($searchExit -gt 1) { throw "History privacy scan failed: $($entry.Key)" }
+        foreach ($location in $locations) {
+            Write-Output ("history`t$($entry.Key)`t$location")
+        }
+    }
+}
+```
+
+将上述位置逐项归类为“保留、脱敏、排除”，敏感值只保留掩码或哈希指纹。扫描无命中也不能越过用户批准；必须先提交最终隐私清单并获得数据所有者明确批准。
+
+#### 13.7.2 批准后才执行 F 盘镜像
+
+以下是批准后使用的参数化模板，本次文档任务不执行它。把 `$approvedDeliveryRoot` 替换成用户明确批准的、尚不存在的绝对交付目录；脚本拒绝占位符、相对路径、盘符根目录和既有目标。它从 `git archive HEAD` 创建唯一临时快照，分别解压到仓库内临时源目录和批准的目标目录，逐文件比较 SHA-256，并用现有 Python `zipfile` 检查所有 ZIP 的 CRC。失败时不自动删除目标目录，以便审计；仓库内临时文件的清理则必须再次验证精确路径。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path -LiteralPath '.').Path
+$python = Join-Path $repoRoot '.venv\Scripts\python.exe'
+$approvedDeliveryRoot = '<approved-f-drive-delivery-directory>'
+if ($approvedDeliveryRoot.Contains('<') -or $approvedDeliveryRoot.Contains('>') -or
+    -not [IO.Path]::IsPathRooted($approvedDeliveryRoot)) {
+    throw 'Set $approvedDeliveryRoot to the user-approved absolute directory'
+}
+
+$deliveryRoot = [IO.Path]::GetFullPath($approvedDeliveryRoot)
+$deliveryParent = [IO.Path]::GetDirectoryName($deliveryRoot)
+$volumeRoot = [IO.Path]::GetPathRoot($deliveryRoot).TrimEnd('\', '/')
+if ($deliveryRoot.TrimEnd('\', '/') -eq $volumeRoot -or
+    -not (Test-Path -LiteralPath $deliveryParent -PathType Container)) {
+    throw "Unsafe or missing delivery parent: $deliveryParent"
+}
+if (Test-Path -LiteralPath $deliveryRoot) {
+    throw "Refusing to overwrite delivery target: $deliveryRoot"
+}
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    throw "Existing project Python is missing: $python"
+}
+
+$snapshotName = '.approved-snapshot-' + [guid]::NewGuid().ToString('N')
+$snapshotZip = Join-Path $repoRoot ($snapshotName + '.zip')
+$snapshotRoot = Join-Path $repoRoot $snapshotName
+foreach ($temporaryPath in @($snapshotZip, $snapshotRoot)) {
+    if (Test-Path -LiteralPath $temporaryPath) {
+        throw "Refusing to overwrite temporary snapshot path: $temporaryPath"
+    }
+}
+
+try {
+    git archive --format=zip --output=$snapshotZip HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'git archive HEAD failed' }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $snapshotRoot)
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $deliveryRoot)
+
+    $sourceHashes = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $snapshotRoot -Recurse -File) {
+        $relative = [IO.Path]::GetRelativePath($snapshotRoot, $file.FullName).Replace('\', '/')
+        $sourceHashes[$relative] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
+    $deliveryHashes = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $deliveryRoot -Recurse -File) {
+        $relative = [IO.Path]::GetRelativePath($deliveryRoot, $file.FullName).Replace('\', '/')
+        $deliveryHashes[$relative] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
+    $pathDelta = @(
+        Compare-Object -ReferenceObject @($sourceHashes.Keys) -DifferenceObject @($deliveryHashes.Keys)
+    )
+    if ($pathDelta.Count -ne 0) { throw 'Delivery file set differs from git archive snapshot' }
+    foreach ($relative in $sourceHashes.Keys) {
+        if ($sourceHashes[$relative] -cne $deliveryHashes[$relative]) {
+            throw "Delivery SHA-256 mismatch: $relative"
+        }
+    }
+
+    $zipPaths = @($snapshotZip) + @(
+        Get-ChildItem -LiteralPath $deliveryRoot -Recurse -File -Filter '*.zip' |
+            Select-Object -ExpandProperty FullName
+    )
+    @'
+import sys
+import zipfile
+from pathlib import Path
+
+for raw_path in sys.argv[1:]:
+    with zipfile.ZipFile(Path(raw_path)) as bundle:
+        if bundle.testzip() is not None:
+            raise RuntimeError("ZIP CRC failure")
+print(f"ZIP CRC verified: {len(sys.argv) - 1} archive(s)")
+'@ | & $python - $zipPaths
+    if ($LASTEXITCODE -ne 0) { throw 'Delivery ZIP CRC verification failed' }
+}
+finally {
+    foreach ($temporaryPath in @($snapshotRoot, $snapshotZip)) {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            $resolvedTemporary = (Resolve-Path -LiteralPath $temporaryPath).Path
+            $expectedTemporary = [IO.Path]::GetFullPath($temporaryPath)
+            if ($resolvedTemporary -ne $expectedTemporary -or
+                (Split-Path -Parent $resolvedTemporary) -ne $repoRoot -or
+                -not [IO.Path]::GetFileName($resolvedTemporary).StartsWith($snapshotName)) {
+                throw "Refusing unsafe snapshot cleanup: $resolvedTemporary"
+            }
+            Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
+        }
+    }
+}
+```
+
+#### 13.7.3 普通 GitHub push 与 fast-forward `main`
+
+只有最终隐私清单获批且远端写权限可用后，才运行以下模板；本次文档任务不执行。它没有任何 force 参数，先普通推送功能分支并核对远端 SHA，再以 `pull --ff-only` 和 `merge --ff-only` 更新 `main`，最后再次核对远端 SHA。若仓库保护规则要求 PR，应停止直接更新 `main`，改走获批的普通 PR 流程，仍禁止 force push。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$remoteName = 'origin'
+$featureBranch = 'handoff/severstal-v2'
+
+git checkout $featureBranch
+if ($LASTEXITCODE -ne 0) { throw 'Unable to check out the approved feature branch' }
+git push $remoteName $featureBranch
+if ($LASTEXITCODE -ne 0) { throw 'Normal feature-branch push failed' }
+
+$localFeatureSha = git rev-parse HEAD
+$remoteFeatureRecord = @(git ls-remote --heads $remoteName ("refs/heads/" + $featureBranch))
+if ($LASTEXITCODE -ne 0 -or $remoteFeatureRecord.Count -ne 1) {
+    throw 'Unable to read the remote feature-branch SHA'
+}
+$remoteFeatureSha = ($remoteFeatureRecord[0] -split '\s+')[0]
+if ($localFeatureSha -cne $remoteFeatureSha) {
+    throw 'Remote feature-branch SHA does not match local HEAD'
+}
+
+git checkout main
+if ($LASTEXITCODE -ne 0) { throw 'Unable to check out main' }
+git pull --ff-only $remoteName main
+if ($LASTEXITCODE -ne 0) { throw 'main is not fast-forwardable from its remote' }
+git merge --ff-only $featureBranch
+if ($LASTEXITCODE -ne 0) { throw 'Feature branch cannot fast-forward main' }
+git push $remoteName main
+if ($LASTEXITCODE -ne 0) { throw 'Normal main push failed' }
+
+$localMainSha = git rev-parse main
+$remoteMainRecord = @(git ls-remote --heads $remoteName 'refs/heads/main')
+if ($LASTEXITCODE -ne 0 -or $remoteMainRecord.Count -ne 1) {
+    throw 'Unable to read the remote main SHA'
+}
+$remoteMainSha = ($remoteMainRecord[0] -split '\s+')[0]
+if ($localMainSha -cne $remoteMainSha) {
+    throw 'Remote main SHA does not match local main'
+}
+```
+
+每一步都把提交 SHA、文件哈希、检查结果和批准状态追加到 `PROGRESS.md`，但绝不记录真实密钥、token、邮箱或用户路径值。
