@@ -403,24 +403,9 @@ finally {
 
 ### 13.4 从图片白名单构建独立的 12 图 ZIP
 
-图片包 `deliverables/severstal_handoff_images_v2_20260902.zip` 只能从以下 12 个 POSIX 相对路径构建；该清单同时由 `tests/test_handoff_v2.py` 中的 `EXPECTED_IMAGE_MEMBERS` 锁定。不得通过通配符把目录中新出现的图片自动带入。
+图片包 `deliverables/severstal_handoff_images_v2_20260902.zip` 只能使用紧邻脚本中逐行列出的 `$members` 数组；它是本文唯一规范的 12 个 POSIX 相对路径白名单，并与 `tests/test_handoff_v2.py` 的 `EXPECTED_IMAGE_MEMBERS` 同源锁定。不得通过通配符把目录中新出现的图片自动带入。
 
-```text
-01_data_audit/class_distribution.png
-01_data_audit/defect_examples.png
-02_eda/outputs/figures/cooccurrence_heatmap.png
-02_eda/outputs/figures/label_combinations.png
-02_eda/outputs/figures/label_frequency.png
-02_eda/outputs/figures/rare_label_samples.png
-02_eda/outputs/figures/representative_samples.png
-03_final_split_v2/evidence/cross_split_near_duplicates_1.png
-03_final_split_v2/evidence/cross_split_near_duplicates_2.png
-03_final_split_v2/evidence/cross_split_near_duplicates_3.png
-03_final_split_v2/figures/mask_area_split_distribution_v2.png
-03_final_split_v2/figures/split_distribution.png
-```
-
-以下 PowerShell 7/.NET 示例从仓库根运行。先把 `$verifiedSourceRoot` 设置为已通过第 13.1 节同等 CRC、路径和 55 项清单检查的交接包根目录，即直接包含 `01_data_audit/`、`02_eda/` 和 `03_final_split_v2/` 的目录；不得指向未经验证的解压结果。`$members` 是唯一输入白名单；脚本先逐项验证源文件，再复制到唯一 staging 并保留目录结构。目标 ZIP 已存在时会停止，不会覆盖正式归档。
+以下 PowerShell 7/.NET 示例从仓库根运行。先把 `$verifiedSourceRoot` 设置为已通过第 13.1 节同等 CRC、路径和 55 项清单检查的交接包根目录，即直接包含 `01_data_audit/`、`02_eda/` 和 `03_final_split_v2/` 的目录；不得指向未经验证的解压结果。脚本先逐项验证 `$members` 中的源文件，再复制到唯一 staging 并保留目录结构。目标 ZIP 已存在时会停止，不会覆盖正式归档。
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -573,14 +558,56 @@ V2 发布后即冻结。除非发现新的、可复核的明确数据泄漏证�
 
 #### 13.7.1 只报告类别和位置的隐私扫描
 
-先把 `$historyRange` 替换为本次拟发布的真实提交范围，再从仓库根运行以下 PowerShell 7 命令。它扫描工作树、暂存内容和拟发布历史，只输出“范围、命中类别、文件位置”，不会输出匹配行或秘密值；不得为了调试去掉 `-l`。对 ZIP、Notebook 和图片还要单独人工审查，因为文本 grep 不能证明二进制内容安全。
+将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。文件扫描只输出范围、命中类别和位置；作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
 
 ```powershell
 $ErrorActionPreference = "Stop"
-$historyRange = '<approved-base-commit>..HEAD'
-if ($historyRange.Contains('<') -or $historyRange.Contains('>')) {
-    throw 'Replace $historyRange with the approved commit range before scanning'
+$approvedBaseCommitSha = '<approved-full-40-character-base-commit-sha>'
+$approvedCommitSha = '<approved-full-40-character-commit-sha>'
+$featureBranch = '<approved-feature-branch>'
+foreach ($candidateSha in @($approvedBaseCommitSha, $approvedCommitSha)) {
+    if ($candidateSha -cnotmatch '^[0-9a-fA-F]{40}$') {
+        throw 'Set both approved commit parameters to full 40-character hexadecimal SHAs'
+    }
+    git cat-file -e "${candidateSha}^{commit}"
+    if ($LASTEXITCODE -ne 0) { throw 'An approved commit parameter does not identify a local commit' }
+    $resolvedCandidate = @(git rev-parse --verify "${candidateSha}^{commit}")
+    if ($LASTEXITCODE -ne 0 -or $resolvedCandidate.Count -ne 1 -or
+        $resolvedCandidate[0].ToLowerInvariant() -cne $candidateSha.ToLowerInvariant()) {
+        throw 'An approved commit parameter does not resolve to its exact SHA'
+    }
 }
+$approvedBaseCommitSha = $approvedBaseCommitSha.ToLowerInvariant()
+$approvedCommitSha = $approvedCommitSha.ToLowerInvariant()
+if ($featureBranch.Contains('<') -or $featureBranch.Contains('>')) {
+    throw 'Set $featureBranch to the user-approved feature branch'
+}
+$validatedFeatureBranch = @(git check-ref-format --branch $featureBranch)
+if ($LASTEXITCODE -ne 0 -or $validatedFeatureBranch.Count -ne 1 -or
+    $validatedFeatureBranch[0] -cne $featureBranch) {
+    throw 'The approved feature branch name is invalid'
+}
+$currentBranch = @(git branch --show-current)
+if ($LASTEXITCODE -ne 0 -or $currentBranch.Count -ne 1 -or
+    $currentBranch[0] -cne $featureBranch) {
+    throw 'The current branch is not the approved feature branch'
+}
+$currentHeadSha = @(git rev-parse --verify HEAD)
+if ($LASTEXITCODE -ne 0 -or $currentHeadSha.Count -ne 1 -or
+    $currentHeadSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Current HEAD is not the approved commit'
+}
+$localFeatureSha = @(git rev-parse --verify "refs/heads/${featureBranch}^{commit}")
+if ($LASTEXITCODE -ne 0 -or $localFeatureSha.Count -ne 1 -or
+    $localFeatureSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'The local feature-branch tip is not the approved commit'
+}
+$worktreeState = @(git status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the worktree state' }
+if ($worktreeState.Count -ne 0) { throw 'The worktree must be clean before approval review' }
+git merge-base --is-ancestor $approvedBaseCommitSha $approvedCommitSha
+if ($LASTEXITCODE -ne 0) { throw 'The approved base is not an ancestor of the approved commit' }
+$historyRange = "$approvedBaseCommitSha..$approvedCommitSha"
 
 $privacyPatterns = [ordered]@{
     'private-key-marker' = 'BEGIN[[:space:]][A-Z0-9 ]*PRIVATE[[:space:]]KEY'
@@ -589,6 +616,17 @@ $privacyPatterns = [ordered]@{
     'windows-local-path' = '(^|[^A-Za-z])[A-Za-z]:[\\/]'
     'home-directory-path' = '/(home|Users)/[^/[:space:]]+'
 }
+$metadataSecretPatterns = [ordered]@{
+    'private-key-marker' = 'BEGIN\s+[A-Z0-9 ]*PRIVATE\s+KEY'
+    'credential-assignment' = '(api[_-]?key|access[_-]?token|oauth|cookie|secret|password)\s*[:=]'
+    'email-address' = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    'windows-local-path' = '(^|[^A-Za-z])[A-Za-z]:[\\/]'
+    'home-directory-path' = '/(home|Users)/[^/\s]+'
+}
+function Get-RedactedFingerprint([AllowEmptyString()][string]$Value) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant().Substring(0, 16)
+}
 $worktreeFiles = @(git ls-files --cached --others --exclude-standard)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate worktree files' }
 $stagedFiles = @(git diff --cached --name-only --diff-filter=ACMR)
@@ -596,6 +634,30 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate staged files' }
 $historyCommits = @(git rev-list $historyRange)
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to enumerate the approved history range'
+}
+
+$metadataFormats = [ordered]@{
+    'author-name' = '%an'
+    'author-email' = '%ae'
+    'committer-name' = '%cn'
+    'committer-email' = '%ce'
+    'commit-message' = '%B'
+}
+foreach ($commit in $historyCommits) {
+    foreach ($field in $metadataFormats.GetEnumerator()) {
+        $rawMetadata = @(git show --no-patch ("--format=" + $field.Value) $commit) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "Unable to inspect Git metadata category: $($field.Key)" }
+        if ($field.Key -eq 'commit-message') {
+            foreach ($pattern in $metadataSecretPatterns.GetEnumerator()) {
+                if ($rawMetadata -match $pattern.Value) {
+                    Write-Output ("{0}`tcommit-message-{1}" -f $commit, $pattern.Key)
+                }
+            }
+            continue
+        }
+        $fingerprint = Get-RedactedFingerprint $rawMetadata
+        Write-Output ("{0}`t{1}`tsha256:{2}" -f $commit, $field.Key, $fingerprint)
+    }
 }
 
 foreach ($entry in $privacyPatterns.GetEnumerator()) {
@@ -616,7 +678,6 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
             Write-Output ("index`t$($entry.Key)`t$location")
         }
     }
-
     foreach ($commit in $historyCommits) {
         $locations = @(git grep -I -i -l -E -e $entry.Value $commit)
         $searchExit = $LASTEXITCODE
@@ -632,24 +693,74 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
 
 #### 13.7.2 批准后才执行 F 盘镜像
 
-以下是批准后使用的参数化模板，本次文档任务不执行它。把 `$approvedDeliveryRoot` 替换成用户明确批准的、尚不存在的绝对交付目录；脚本拒绝占位符、相对路径、盘符根目录和既有目标。它从 `git archive HEAD` 创建唯一临时快照，分别解压到仓库内临时源目录和批准的目标目录，逐文件比较 SHA-256，并用现有 Python `zipfile` 检查所有 ZIP 的 CRC。失败时不自动删除目标目录，以便审计；仓库内临时文件的清理则必须再次验证精确路径。
+以下是批准后使用的参数化模板，本次文档任务不执行它。必须填写用户批准的完整提交 SHA、功能分支和尚不存在的 F 盘绝对交付目录；脚本拒绝占位符、相对路径、盘符根目录、非 F 盘路径和既有目标。任何本地归档或 F 盘写入前，它先确认批准提交真实且精确、当前分支和本地功能分支 tip 都指向该提交、HEAD 相同且工作树干净。它只从 `$approvedCommitSha` 创建唯一临时快照，分别解压到仓库内临时源目录和批准的目标目录，逐文件比较该提交快照与镜像的 SHA-256，并用现有 Python `zipfile` 检查提交快照及镜像内所有 ZIP 的 CRC。失败时不自动删除目标目录，以便审计；仓库内临时文件的清理则必须再次验证精确路径。
 
 ```powershell
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path -LiteralPath '.').Path
 $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
+$approvedCommitSha = '<approved-full-40-character-commit-sha>'
+$featureBranch = '<approved-feature-branch>'
 $approvedDeliveryRoot = '<approved-f-drive-delivery-directory>'
+
+if ($approvedCommitSha -cnotmatch '^[0-9a-fA-F]{40}$') {
+    throw 'Set $approvedCommitSha to the user-approved full 40-character hexadecimal SHA'
+}
+git cat-file -e "${approvedCommitSha}^{commit}"
+if ($LASTEXITCODE -ne 0) { throw 'The approved commit does not identify a local commit' }
+$resolvedApprovedCommit = @(git rev-parse --verify "${approvedCommitSha}^{commit}")
+if ($LASTEXITCODE -ne 0 -or $resolvedApprovedCommit.Count -ne 1 -or
+    $resolvedApprovedCommit[0].ToLowerInvariant() -cne $approvedCommitSha.ToLowerInvariant()) {
+    throw 'The approved commit does not resolve to its exact SHA'
+}
+$approvedCommitSha = $approvedCommitSha.ToLowerInvariant()
+if ($featureBranch.Contains('<') -or $featureBranch.Contains('>')) {
+    throw 'Set $featureBranch to the user-approved feature branch'
+}
+$validatedFeatureBranch = @(git check-ref-format --branch $featureBranch)
+if ($LASTEXITCODE -ne 0 -or $validatedFeatureBranch.Count -ne 1 -or
+    $validatedFeatureBranch[0] -cne $featureBranch) {
+    throw 'The approved feature branch name is invalid'
+}
+$currentBranch = @(git branch --show-current)
+if ($LASTEXITCODE -ne 0 -or $currentBranch.Count -ne 1 -or
+    $currentBranch[0] -cne $featureBranch) {
+    throw 'The current branch is not the approved feature branch'
+}
+$currentHeadSha = @(git rev-parse --verify HEAD)
+if ($LASTEXITCODE -ne 0 -or $currentHeadSha.Count -ne 1 -or
+    $currentHeadSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Current HEAD is not the approved commit'
+}
+$localFeatureSha = @(git rev-parse --verify "refs/heads/${featureBranch}^{commit}")
+if ($LASTEXITCODE -ne 0 -or $localFeatureSha.Count -ne 1 -or
+    $localFeatureSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'The local feature-branch tip is not the approved commit'
+}
+$worktreeState = @(git status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the worktree state' }
+if ($worktreeState.Count -ne 0) { throw 'The worktree must be clean before F-drive delivery' }
+
 if ($approvedDeliveryRoot.Contains('<') -or $approvedDeliveryRoot.Contains('>') -or
     -not [IO.Path]::IsPathRooted($approvedDeliveryRoot)) {
-    throw 'Set $approvedDeliveryRoot to the user-approved absolute directory'
+    throw 'Set $approvedDeliveryRoot to the user-approved absolute F-drive directory'
 }
 
 $deliveryRoot = [IO.Path]::GetFullPath($approvedDeliveryRoot)
 $deliveryParent = [IO.Path]::GetDirectoryName($deliveryRoot)
-$volumeRoot = [IO.Path]::GetPathRoot($deliveryRoot).TrimEnd('\', '/')
-if ($deliveryRoot.TrimEnd('\', '/') -eq $volumeRoot -or
+$volumeRoot = [IO.Path]::GetPathRoot($deliveryRoot)
+if (-not [String]::Equals($volumeRoot, 'F:\', [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryRoot.TrimEnd('\', '/'), $volumeRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -or
     -not (Test-Path -LiteralPath $deliveryParent -PathType Container)) {
     throw "Unsafe or missing delivery parent: $deliveryParent"
+}
+$resolvedDeliveryParent = (Resolve-Path -LiteralPath $deliveryParent).Path
+if (-not [String]::Equals(
+    $resolvedDeliveryParent,
+    [IO.Path]::GetFullPath($deliveryParent),
+    [StringComparison]::OrdinalIgnoreCase
+)) {
+    throw "Delivery parent does not resolve exactly: $deliveryParent"
 }
 if (Test-Path -LiteralPath $deliveryRoot) {
     throw "Refusing to overwrite delivery target: $deliveryRoot"
@@ -662,17 +773,23 @@ $snapshotName = '.approved-snapshot-' + [guid]::NewGuid().ToString('N')
 $snapshotZip = Join-Path $repoRoot ($snapshotName + '.zip')
 $snapshotRoot = Join-Path $repoRoot $snapshotName
 foreach ($temporaryPath in @($snapshotZip, $snapshotRoot)) {
-    if (Test-Path -LiteralPath $temporaryPath) {
+    $expectedTemporary = [IO.Path]::GetFullPath($temporaryPath)
+    if ((Split-Path -Parent $expectedTemporary) -ne $repoRoot -or
+        -not [IO.Path]::GetFileName($expectedTemporary).StartsWith($snapshotName)) {
+        throw "Unsafe temporary snapshot path: $expectedTemporary"
+    }
+    if (Test-Path -LiteralPath $expectedTemporary) {
         throw "Refusing to overwrite temporary snapshot path: $temporaryPath"
     }
 }
 
 try {
-    git archive --format=zip --output=$snapshotZip HEAD
-    if ($LASTEXITCODE -ne 0) { throw 'git archive HEAD failed' }
+    git archive --format=zip --output=$snapshotZip $approvedCommitSha
+    if ($LASTEXITCODE -ne 0) { throw 'git archive of the approved commit failed' }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $snapshotRoot)
+    $null = New-Item -ItemType Directory -Path $deliveryRoot
     [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $deliveryRoot)
 
     $sourceHashes = @{}
@@ -730,45 +847,85 @@ finally {
 
 #### 13.7.3 普通 GitHub push 与 fast-forward `main`
 
-只有最终隐私清单获批且远端写权限可用后，才运行以下模板；本次文档任务不执行。它没有任何 force 参数，先普通推送功能分支并核对远端 SHA，再以 `pull --ff-only` 和 `merge --ff-only` 更新 `main`，最后再次核对远端 SHA。若仓库保护规则要求 PR，应停止直接更新 `main`，改走获批的普通 PR 流程，仍禁止 force push。
+只有最终隐私清单和完整 40 位提交 SHA 获批且远端写权限可用后，才运行以下模板；本次文档任务不执行。任何远端访问或 checkout 前，它先确认当前分支名、当前 HEAD、本地功能分支 tip 和干净工作树都精确绑定到批准对象。它没有任何 force 参数，普通推送功能分支后要求远端功能分支等于批准 SHA，再以 `pull --ff-only` 和对批准 SHA 的 `merge --ff-only` 更新 `main`；合并后的本地 `main` 和普通推送后的远端 `main` 也必须等于批准 SHA。若仓库保护规则要求 PR，应停止直接更新 `main`，改走获批的普通 PR 流程，仍禁止 force push。
 
 ```powershell
 $ErrorActionPreference = "Stop"
 $remoteName = 'origin'
-$featureBranch = 'handoff/severstal-v2'
+$approvedCommitSha = '<approved-full-40-character-commit-sha>'
+$featureBranch = '<approved-feature-branch>'
 
-git checkout $featureBranch
-if ($LASTEXITCODE -ne 0) { throw 'Unable to check out the approved feature branch' }
+if ($approvedCommitSha -cnotmatch '^[0-9a-fA-F]{40}$') {
+    throw 'Set $approvedCommitSha to the user-approved full 40-character hexadecimal SHA'
+}
+git cat-file -e "${approvedCommitSha}^{commit}"
+if ($LASTEXITCODE -ne 0) { throw 'The approved commit does not identify a local commit' }
+$resolvedApprovedCommit = @(git rev-parse --verify "${approvedCommitSha}^{commit}")
+if ($LASTEXITCODE -ne 0 -or $resolvedApprovedCommit.Count -ne 1 -or
+    $resolvedApprovedCommit[0].ToLowerInvariant() -cne $approvedCommitSha.ToLowerInvariant()) {
+    throw 'The approved commit does not resolve to its exact SHA'
+}
+$approvedCommitSha = $approvedCommitSha.ToLowerInvariant()
+if ($featureBranch.Contains('<') -or $featureBranch.Contains('>')) {
+    throw 'Set $featureBranch to the user-approved feature branch'
+}
+$validatedFeatureBranch = @(git check-ref-format --branch $featureBranch)
+if ($LASTEXITCODE -ne 0 -or $validatedFeatureBranch.Count -ne 1 -or
+    $validatedFeatureBranch[0] -cne $featureBranch) {
+    throw 'The approved feature branch name is invalid'
+}
+$currentBranch = @(git branch --show-current)
+if ($LASTEXITCODE -ne 0 -or $currentBranch.Count -ne 1 -or
+    $currentBranch[0] -cne $featureBranch) {
+    throw 'The current branch is not the approved feature branch'
+}
+$currentHeadSha = @(git rev-parse --verify HEAD)
+if ($LASTEXITCODE -ne 0 -or $currentHeadSha.Count -ne 1 -or
+    $currentHeadSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Current HEAD is not the approved commit'
+}
+$localFeatureSha = @(git rev-parse --verify "refs/heads/${featureBranch}^{commit}")
+if ($LASTEXITCODE -ne 0 -or $localFeatureSha.Count -ne 1 -or
+    $localFeatureSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'The local feature-branch tip is not the approved commit'
+}
+$worktreeState = @(git status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the worktree state' }
+if ($worktreeState.Count -ne 0) { throw 'The worktree must be clean before GitHub publication' }
+
 git push $remoteName $featureBranch
 if ($LASTEXITCODE -ne 0) { throw 'Normal feature-branch push failed' }
 
-$localFeatureSha = git rev-parse HEAD
 $remoteFeatureRecord = @(git ls-remote --heads $remoteName ("refs/heads/" + $featureBranch))
 if ($LASTEXITCODE -ne 0 -or $remoteFeatureRecord.Count -ne 1) {
     throw 'Unable to read the remote feature-branch SHA'
 }
 $remoteFeatureSha = ($remoteFeatureRecord[0] -split '\s+')[0]
-if ($localFeatureSha -cne $remoteFeatureSha) {
-    throw 'Remote feature-branch SHA does not match local HEAD'
+if ($remoteFeatureSha.ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Remote feature-branch SHA is not the approved commit'
 }
 
 git checkout main
 if ($LASTEXITCODE -ne 0) { throw 'Unable to check out main' }
 git pull --ff-only $remoteName main
 if ($LASTEXITCODE -ne 0) { throw 'main is not fast-forwardable from its remote' }
-git merge --ff-only $featureBranch
-if ($LASTEXITCODE -ne 0) { throw 'Feature branch cannot fast-forward main' }
+git merge --ff-only $approvedCommitSha
+if ($LASTEXITCODE -ne 0) { throw 'The approved commit cannot fast-forward main' }
+$localMainSha = @(git rev-parse --verify HEAD)
+if ($LASTEXITCODE -ne 0 -or $localMainSha.Count -ne 1 -or
+    $localMainSha[0].ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Local main is not the approved commit after fast-forward merge'
+}
 git push $remoteName main
 if ($LASTEXITCODE -ne 0) { throw 'Normal main push failed' }
 
-$localMainSha = git rev-parse main
 $remoteMainRecord = @(git ls-remote --heads $remoteName 'refs/heads/main')
 if ($LASTEXITCODE -ne 0 -or $remoteMainRecord.Count -ne 1) {
     throw 'Unable to read the remote main SHA'
 }
 $remoteMainSha = ($remoteMainRecord[0] -split '\s+')[0]
-if ($localMainSha -cne $remoteMainSha) {
-    throw 'Remote main SHA does not match local main'
+if ($remoteMainSha.ToLowerInvariant() -cne $approvedCommitSha) {
+    throw 'Remote main is not the approved commit'
 }
 ```
 
