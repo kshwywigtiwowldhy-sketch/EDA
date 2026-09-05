@@ -558,7 +558,7 @@ V2 发布后即冻结。除非发现新的、可复核的明确数据泄漏证�
 
 #### 13.7.1 只报告类别和位置的隐私扫描
 
-将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。所有 Git 路径生产命令都显式设置 `core.quotePath=false`，以本仓库已验证的逐行路径协议返回真实 Unicode 路径；路径保留为 PowerShell 数组并在 `--` 后逐项传递，含空格的文件名不会被字符串拼接拆分。文件扫描只输出范围、命中类别和位置；作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
+将基线、最终获批对象和获批功能分支填写完整，再从仓库根运行以下 PowerShell 7 命令。它要求工作树干净，并扫描基线到获批提交的文件历史及每个提交的 Git 作者、提交者和消息元数据。所有 Git 路径生产命令都显式设置 `core.quotePath=false`，以本仓库已验证的逐行路径协议返回真实 Unicode 路径；路径保留为 PowerShell 数组并在 `--` 后逐项传递，含空格的文件名不会被字符串拼接拆分。worktree、index 和 history 的文件内容扫描统一复用 `$secretPatterns`，文件名另按 `$sensitivePathPatterns` 分类；两者都只输出范围、命中类别和仓库相对位置。作者/提交者姓名与邮箱无条件以“提交 SHA、类别、脱敏指纹”进入清单；消息只在内存中匹配同等敏感模式，命中时仅输出提交 SHA 和类别。脚本不回显姓名、邮箱、消息或秘密值，也不把原始元数据写入文件。不得为了调试去掉 `-l`；ZIP、Notebook 和图片仍须人工审查。
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -609,16 +609,31 @@ git merge-base --is-ancestor $approvedBaseCommitSha $approvedCommitSha
 if ($LASTEXITCODE -ne 0) { throw 'The approved base is not an ancestor of the approved commit' }
 $historyRange = "$approvedBaseCommitSha..$approvedCommitSha"
 
-$privacyPatterns = [ordered]@{
-    'private-key-marker' = 'BEGIN[[:space:]][A-Z0-9 ]*PRIVATE[[:space:]]KEY'
+$secretPatterns = [ordered]@{
+    'github-classic-token' = 'gh[pousr]_[A-Za-z0-9_]{20,}'
+    'github-fine-grained-token' = 'github_pat_[A-Za-z0-9_]{20,}'
+    'openai-api-key' = 'sk-[A-Za-z0-9_-]{20,}'
+    'aws-access-key-id' = 'AKIA[A-Z0-9]{16}'
+    'private-key-marker' = 'BEGIN[[:space:]](RSA[[:space:]]|EC[[:space:]]|OPENSSH[[:space:]])?PRIVATE[[:space:]]KEY'
     'credential-assignment' = '(api[_-]?key|access[_-]?token|oauth|cookie|secret|password)[[:space:]]*[:=]'
+    'kaggle-credential-shape' = '"(username|key)"[[:space:]]*:[[:space:]]*"[^"]+"'
     'email-address' = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
     'windows-local-path' = '(^|[^A-Za-z])[A-Za-z]:[\\/]'
     'home-directory-path' = '/(home|Users)/[^/[:space:]]+'
 }
+$sensitivePathPatterns = [ordered]@{
+    'dotenv-file' = '(^|/)\.env(\.[^/]+)?$'
+    'kaggle-credentials-file' = '(^|/)kaggle\.json$'
+    'private-key-file' = '(^|/)(id_(rsa|dsa|ecdsa|ed25519)|[^/]+\.(pem|key|p12|pfx|ppk))$'
+}
 $metadataSecretPatterns = [ordered]@{
-    'private-key-marker' = 'BEGIN\s+[A-Z0-9 ]*PRIVATE\s+KEY'
+    'github-classic-token' = 'gh[pousr]_[A-Za-z0-9_]{20,}'
+    'github-fine-grained-token' = 'github_pat_[A-Za-z0-9_]{20,}'
+    'openai-api-key' = 'sk-[A-Za-z0-9_-]{20,}'
+    'aws-access-key-id' = 'AKIA[A-Z0-9]{16}'
+    'private-key-marker' = 'BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY'
     'credential-assignment' = '(api[_-]?key|access[_-]?token|oauth|cookie|secret|password)\s*[:=]'
+    'kaggle-credential-shape' = '"(username|key)"\s*:\s*"[^"]+"'
     'email-address' = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
     'windows-local-path' = '(^|[^A-Za-z])[A-Za-z]:[\\/]'
     'home-directory-path' = '/(home|Users)/[^/\s]+'
@@ -634,6 +649,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate staged files' }
 $historyCommits = @(git rev-list $historyRange)
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to enumerate the approved history range'
+}
+$historyFilesByCommit = @{}
+foreach ($commit in $historyCommits) {
+    $historyFiles = @(git -c core.quotePath=false ls-tree -r --full-tree --name-only $commit)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate a history file set' }
+    $historyFilesByCommit[$commit] = $historyFiles
 }
 
 $metadataFormats = [ordered]@{
@@ -660,7 +681,7 @@ foreach ($commit in $historyCommits) {
     }
 }
 
-foreach ($entry in $privacyPatterns.GetEnumerator()) {
+foreach ($entry in $secretPatterns.GetEnumerator()) {
     if ($worktreeFiles.Count -gt 0) {
         $locations = @(& rg -I -i -l -e $entry.Value -- $worktreeFiles)
         $searchExit = $LASTEXITCODE
@@ -683,7 +704,25 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
         $searchExit = $LASTEXITCODE
         if ($searchExit -gt 1) { throw "History privacy scan failed: $($entry.Key)" }
         foreach ($location in $locations) {
-            Write-Output ("history`t$($entry.Key)`t$location")
+            $historyPrefix = "${commit}:"
+            if (-not $location.StartsWith($historyPrefix, [StringComparison]::Ordinal)) {
+                throw 'History privacy scan returned an unexpected location format'
+            }
+            Write-Output ("history`t$($entry.Key)`t$($location.Substring($historyPrefix.Length))")
+        }
+    }
+}
+
+foreach ($entry in $sensitivePathPatterns.GetEnumerator()) {
+    foreach ($path in $worktreeFiles) {
+        if ($path -match $entry.Value) { Write-Output ("worktree`t$($entry.Key)`t$path") }
+    }
+    foreach ($path in $stagedFiles) {
+        if ($path -match $entry.Value) { Write-Output ("index`t$($entry.Key)`t$path") }
+    }
+    foreach ($commit in $historyCommits) {
+        foreach ($path in @($historyFilesByCommit[$commit])) {
+            if ($path -match $entry.Value) { Write-Output ("history`t$($entry.Key)`t$path") }
         }
     }
 }
@@ -693,7 +732,7 @@ foreach ($entry in $privacyPatterns.GetEnumerator()) {
 
 #### 13.7.2 批准后才执行 F 盘镜像
 
-以下是批准后使用的参数化模板，本次文档任务不执行它。必须填写用户批准的完整提交 SHA、功能分支和尚不存在的 F 盘绝对交付目录；脚本拒绝占位符、相对路径、盘符根目录、非 F 盘路径和既有目标。任何本地归档或 F 盘写入前，它先确认批准提交真实且精确、当前分支和本地功能分支 tip 都指向该提交、HEAD 相同且工作树干净。它只从 `$approvedCommitSha` 创建唯一临时快照，分别解压到仓库内临时源目录和批准的目标目录，逐文件比较该提交快照与镜像的 SHA-256，并用现有 Python `zipfile` 检查提交快照及镜像内所有 ZIP 的 CRC。失败时不自动删除目标目录，以便审计；仓库内临时文件的清理则必须再次验证精确路径。
+以下是批准后使用的参数化模板，本次文档任务不执行它。必须填写用户批准的完整提交 SHA、功能分支、尚不存在的 F 盘绝对交付目录及其 sibling 总 ZIP；脚本拒绝占位符、相对路径、盘符根目录、非 F 盘路径、不同父目录、同一路径和既有目标。任何本地归档或 F 盘写入前，它先确认批准提交真实且精确、当前分支和本地功能分支 tip 都指向该提交、HEAD 相同且工作树干净，并预检全部目标与临时路径。它只从 `$approvedCommitSha` 创建 clean snapshot，解压到独立交付目录；目录与 Git tree 的相对路径及 SHA-256 完全一致后，才在同级以目录内部相对路径为根创建总 ZIP。随后验证总 ZIP CRC、无重复/目录/不安全成员、成员集合及逐成员 SHA-256，并复核交付目录内原有 ZIP 的 CRC。失败时只删除本次成功创建且再次通过精确路径校验的交付目录和总 ZIP，绝不删除开头已存在的目标。
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -702,6 +741,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 $approvedCommitSha = '<approved-full-40-character-commit-sha>'
 $featureBranch = '<approved-feature-branch>'
 $approvedDeliveryRoot = '<approved-f-drive-delivery-directory>'
+$deliveryZip = '<approved-f-drive-delivery-zip>'
 
 if ($approvedCommitSha -cnotmatch '^[0-9a-fA-F]{40}$') {
     throw 'Set $approvedCommitSha to the user-approved full 40-character hexadecimal SHA'
@@ -741,18 +781,31 @@ $worktreeState = @(git status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the worktree state' }
 if ($worktreeState.Count -ne 0) { throw 'The worktree must be clean before F-drive delivery' }
 
-if ($approvedDeliveryRoot.Contains('<') -or $approvedDeliveryRoot.Contains('>') -or
-    -not [IO.Path]::IsPathRooted($approvedDeliveryRoot)) {
-    throw 'Set $approvedDeliveryRoot to the user-approved absolute F-drive directory'
+foreach ($approvedPath in @($approvedDeliveryRoot, $deliveryZip)) {
+    if ([String]::IsNullOrWhiteSpace($approvedPath) -or
+        $approvedPath.Contains('<') -or $approvedPath.Contains('>') -or
+        -not [IO.Path]::IsPathRooted($approvedPath)) {
+        throw 'Set both delivery targets to user-approved absolute F-drive paths'
+    }
 }
 
 $deliveryRoot = [IO.Path]::GetFullPath($approvedDeliveryRoot)
+$deliveryZip = [IO.Path]::GetFullPath($deliveryZip)
 $deliveryParent = [IO.Path]::GetDirectoryName($deliveryRoot)
-$volumeRoot = [IO.Path]::GetPathRoot($deliveryRoot)
-if (-not [String]::Equals($volumeRoot, 'F:\', [StringComparison]::OrdinalIgnoreCase) -or
-    [String]::Equals($deliveryRoot.TrimEnd('\', '/'), $volumeRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -or
+$deliveryZipParent = [IO.Path]::GetDirectoryName($deliveryZip)
+$deliveryVolumeRoot = [IO.Path]::GetPathRoot($deliveryRoot)
+$deliveryZipVolumeRoot = [IO.Path]::GetPathRoot($deliveryZip)
+if (-not [String]::Equals($deliveryVolumeRoot, 'F:\', [StringComparison]::OrdinalIgnoreCase) -or
+    -not [String]::Equals($deliveryZipVolumeRoot, 'F:\', [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryRoot.TrimEnd('\', '/'), $deliveryVolumeRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryZip.TrimEnd('\', '/'), $deliveryZipVolumeRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryRoot, $repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryZip, $repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    [String]::Equals($deliveryRoot, $deliveryZip, [StringComparison]::OrdinalIgnoreCase) -or
+    -not [String]::Equals($deliveryParent, $deliveryZipParent, [StringComparison]::OrdinalIgnoreCase) -or
+    -not [String]::Equals([IO.Path]::GetExtension($deliveryZip), '.zip', [StringComparison]::OrdinalIgnoreCase) -or
     -not (Test-Path -LiteralPath $deliveryParent -PathType Container)) {
-    throw "Unsafe or missing delivery parent: $deliveryParent"
+    throw 'Unsafe delivery targets or parents'
 }
 $resolvedDeliveryParent = (Resolve-Path -LiteralPath $deliveryParent).Path
 if (-not [String]::Equals(
@@ -762,11 +815,27 @@ if (-not [String]::Equals(
 )) {
     throw "Delivery parent does not resolve exactly: $deliveryParent"
 }
-if (Test-Path -LiteralPath $deliveryRoot) {
-    throw "Refusing to overwrite delivery target: $deliveryRoot"
+foreach ($deliveryTarget in @($deliveryRoot, $deliveryZip)) {
+    if (Test-Path -LiteralPath $deliveryTarget) {
+        throw "Refusing to overwrite delivery target: $deliveryTarget"
+    }
 }
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "Existing project Python is missing: $python"
+}
+
+$approvedTreePaths = @(git -c core.quotePath=false ls-tree -r --full-tree --name-only $approvedCommitSha)
+if ($LASTEXITCODE -ne 0 -or $approvedTreePaths.Count -eq 0) {
+    throw 'Unable to enumerate the approved commit tree'
+}
+$approvedTreeSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($relative in $approvedTreePaths) {
+    $parts = @($relative -split '/')
+    if ([String]::IsNullOrWhiteSpace($relative) -or $relative.Contains('\') -or
+        [IO.Path]::IsPathRooted($relative) -or $relative -match '^[A-Za-z]:' -or
+        $parts -contains '..' -or -not $approvedTreeSet.Add($relative)) {
+        throw "Unsafe or duplicate approved tree path: $relative"
+    }
 }
 
 $snapshotName = '.approved-snapshot-' + [guid]::NewGuid().ToString('N')
@@ -783,65 +852,192 @@ foreach ($temporaryPath in @($snapshotZip, $snapshotRoot)) {
     }
 }
 
+$deliveryRootCreated = $false
+$deliveryZipCreated = $false
 try {
-    git archive --format=zip --output=$snapshotZip $approvedCommitSha
-    if ($LASTEXITCODE -ne 0) { throw 'git archive of the approved commit failed' }
+    try {
+        git archive --format=zip --output=$snapshotZip $approvedCommitSha
+        if ($LASTEXITCODE -ne 0) { throw 'git archive of the approved commit failed' }
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $snapshotRoot)
-    $null = New-Item -ItemType Directory -Path $deliveryRoot
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $deliveryRoot)
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $snapshotRoot)
+        $null = New-Item -ItemType Directory -Path $deliveryRoot
+        $deliveryRootCreated = $true
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($snapshotZip, $deliveryRoot)
 
-    $sourceHashes = @{}
-    foreach ($file in Get-ChildItem -LiteralPath $snapshotRoot -Recurse -File) {
-        $relative = [IO.Path]::GetRelativePath($snapshotRoot, $file.FullName).Replace('\', '/')
-        $sourceHashes[$relative] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
-    }
-    $deliveryHashes = @{}
-    foreach ($file in Get-ChildItem -LiteralPath $deliveryRoot -Recurse -File) {
-        $relative = [IO.Path]::GetRelativePath($deliveryRoot, $file.FullName).Replace('\', '/')
-        $deliveryHashes[$relative] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
-    }
-    $pathDelta = @(
-        Compare-Object -ReferenceObject @($sourceHashes.Keys) -DifferenceObject @($deliveryHashes.Keys)
-    )
-    if ($pathDelta.Count -ne 0) { throw 'Delivery file set differs from git archive snapshot' }
-    foreach ($relative in $sourceHashes.Keys) {
-        if ($sourceHashes[$relative] -cne $deliveryHashes[$relative]) {
-            throw "Delivery SHA-256 mismatch: $relative"
+        $sourceHashes = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($file in Get-ChildItem -LiteralPath $snapshotRoot -Recurse -File) {
+            $relative = [IO.Path]::GetRelativePath($snapshotRoot, $file.FullName).Replace('\', '/')
+            $sourceHashes.Add($relative, (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant())
         }
-    }
+        $deliveryHashes = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($file in Get-ChildItem -LiteralPath $deliveryRoot -Recurse -File) {
+            $relative = [IO.Path]::GetRelativePath($deliveryRoot, $file.FullName).Replace('\', '/')
+            $deliveryHashes.Add($relative, (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant())
+        }
+        if ($approvedTreeSet.Count -ne $sourceHashes.Count -or $sourceHashes.Count -ne $deliveryHashes.Count) {
+            throw 'Approved tree, snapshot, and delivery file counts differ'
+        }
+        foreach ($relative in $approvedTreeSet) {
+            if (-not $sourceHashes.ContainsKey($relative) -or -not $deliveryHashes.ContainsKey($relative)) {
+                throw "Delivery file set differs from the approved commit tree: $relative"
+            }
+            if ($sourceHashes[$relative] -cne $deliveryHashes[$relative]) {
+                throw "Delivery SHA-256 mismatch: $relative"
+            }
+        }
 
-    $zipPaths = @($snapshotZip) + @(
-        Get-ChildItem -LiteralPath $deliveryRoot -Recurse -File -Filter '*.zip' |
-            Select-Object -ExpandProperty FullName
-    )
-    @'
+        $zipMembers = [string[]]@($deliveryHashes.Keys)
+        [Array]::Sort($zipMembers, [StringComparer]::Ordinal)
+        $deliveryZipStream = [IO.File]::Open(
+            $deliveryZip,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::None
+        )
+        $deliveryZipCreated = $true
+        try {
+            $deliveryArchive = [IO.Compression.ZipArchive]::new(
+                $deliveryZipStream,
+                [IO.Compression.ZipArchiveMode]::Create,
+                $true
+            )
+            try {
+                foreach ($relative in $zipMembers) {
+                    $entry = $deliveryArchive.CreateEntry(
+                        $relative,
+                        [IO.Compression.CompressionLevel]::Optimal
+                    )
+                    $inputStream = [IO.File]::OpenRead((Join-Path $deliveryRoot $relative.Replace('/', '\')))
+                    $entryStream = $entry.Open()
+                    try { $inputStream.CopyTo($entryStream) }
+                    finally {
+                        $entryStream.Dispose()
+                        $inputStream.Dispose()
+                    }
+                }
+            }
+            finally { $deliveryArchive.Dispose() }
+        }
+        finally { $deliveryZipStream.Dispose() }
+
+        @'
+import hashlib
+import re
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-for raw_path in sys.argv[1:]:
-    with zipfile.ZipFile(Path(raw_path)) as bundle:
+snapshot_zip = Path(sys.argv[1])
+delivery_root = Path(sys.argv[2])
+delivery_zip = Path(sys.argv[3])
+
+def sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def sha256_stream(stream) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+def require_crc(path: Path) -> None:
+    with zipfile.ZipFile(path) as bundle:
         if bundle.testzip() is not None:
             raise RuntimeError("ZIP CRC failure")
-print(f"ZIP CRC verified: {len(sys.argv) - 1} archive(s)")
-'@ | & $python - $zipPaths
-    if ($LASTEXITCODE -ne 0) { throw 'Delivery ZIP CRC verification failed' }
+
+require_crc(snapshot_zip)
+for nested_zip in delivery_root.rglob("*.zip"):
+    require_crc(nested_zip)
+
+directory_hashes = {
+    path.relative_to(delivery_root).as_posix(): sha256_path(path)
+    for path in delivery_root.rglob("*")
+    if path.is_file()
 }
-finally {
-    foreach ($temporaryPath in @($snapshotRoot, $snapshotZip)) {
-        if (Test-Path -LiteralPath $temporaryPath) {
-            $resolvedTemporary = (Resolve-Path -LiteralPath $temporaryPath).Path
-            $expectedTemporary = [IO.Path]::GetFullPath($temporaryPath)
-            if ($resolvedTemporary -ne $expectedTemporary -or
-                (Split-Path -Parent $resolvedTemporary) -ne $repoRoot -or
-                -not [IO.Path]::GetFileName($resolvedTemporary).StartsWith($snapshotName)) {
-                throw "Refusing unsafe snapshot cleanup: $resolvedTemporary"
+with zipfile.ZipFile(delivery_zip) as bundle:
+    if bundle.testzip() is not None:
+        raise RuntimeError("Total ZIP CRC failure")
+    infos = bundle.infolist()
+    names = [info.filename for info in infos]
+    if len(names) != len(set(names)):
+        raise RuntimeError("Duplicate total ZIP member")
+    for info in infos:
+        name = info.filename
+        pure = PurePosixPath(name)
+        if (
+            info.is_dir()
+            or "\\" in name
+            or pure.is_absolute()
+            or pure.anchor
+            or ".." in pure.parts
+            or re.match(r"^[A-Za-z]:", name)
+        ):
+            raise RuntimeError("Unsafe total ZIP member")
+    if set(names) != set(directory_hashes):
+        raise RuntimeError("Total ZIP member set differs from delivery directory")
+    for info in infos:
+        with bundle.open(info) as stream:
+            if sha256_stream(stream) != directory_hashes[info.filename]:
+                raise RuntimeError("Total ZIP member SHA-256 mismatch")
+'@ | & $python - $snapshotZip $deliveryRoot $deliveryZip
+        if ($LASTEXITCODE -ne 0) { throw 'Delivery ZIP verification failed' }
+
+        $manifestLines = foreach ($relative in $zipMembers) {
+            '{0}  {1}' -f $deliveryHashes[$relative], $relative
+        }
+        $manifestText = ($manifestLines -join "`n") + "`n"
+        $manifestBytes = [Text.Encoding]::UTF8.GetBytes($manifestText)
+        $directoryManifestSha = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($manifestBytes)
+        ).ToLowerInvariant()
+        $deliveryZipSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $deliveryZip).Hash.ToLowerInvariant()
+        Write-Output ((
+            'Successful-run evidence to append to PROGRESS.md: approved_commit={0} directory_files={1} ' +
+            'directory_manifest_sha256={2} delivery_zip_sha256={3} delivery_zip_crc=verified'
+        ) -f $approvedCommitSha, $deliveryHashes.Count, $directoryManifestSha, $deliveryZipSha)
+    }
+    finally {
+        foreach ($temporaryPath in @($snapshotRoot, $snapshotZip)) {
+            if (Test-Path -LiteralPath $temporaryPath) {
+                $resolvedTemporary = (Resolve-Path -LiteralPath $temporaryPath).Path
+                $expectedTemporary = [IO.Path]::GetFullPath($temporaryPath)
+                if ($resolvedTemporary -ne $expectedTemporary -or
+                    (Split-Path -Parent $resolvedTemporary) -ne $repoRoot -or
+                    -not [IO.Path]::GetFileName($resolvedTemporary).StartsWith($snapshotName)) {
+                    throw "Refusing unsafe snapshot cleanup: $resolvedTemporary"
+                }
+                Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
             }
-            Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
         }
     }
+}
+catch {
+    $deliveryFailure = $_
+    if ($deliveryZipCreated -and (Test-Path -LiteralPath $deliveryZip)) {
+        $resolvedCreatedZip = (Resolve-Path -LiteralPath $deliveryZip).Path
+        if (-not [String]::Equals($resolvedCreatedZip, $deliveryZip, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [String]::Equals((Split-Path -Parent $resolvedCreatedZip), $resolvedDeliveryParent, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [String]::Equals([IO.Path]::GetFileName($resolvedCreatedZip), [IO.Path]::GetFileName($deliveryZip), [StringComparison]::Ordinal)) {
+            throw "Refusing unsafe created ZIP rollback: $resolvedCreatedZip"
+        }
+        Remove-Item -LiteralPath $resolvedCreatedZip -Force
+    }
+    if ($deliveryRootCreated -and (Test-Path -LiteralPath $deliveryRoot)) {
+        $resolvedCreatedRoot = (Resolve-Path -LiteralPath $deliveryRoot).Path
+        if (-not [String]::Equals($resolvedCreatedRoot, $deliveryRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [String]::Equals((Split-Path -Parent $resolvedCreatedRoot), $resolvedDeliveryParent, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [String]::Equals([IO.Path]::GetFileName($resolvedCreatedRoot), [IO.Path]::GetFileName($deliveryRoot), [StringComparison]::Ordinal)) {
+            throw "Refusing unsafe created directory rollback: $resolvedCreatedRoot"
+        }
+        Remove-Item -LiteralPath $resolvedCreatedRoot -Recurse -Force
+    }
+    throw $deliveryFailure
 }
 ```
 
